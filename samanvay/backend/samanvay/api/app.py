@@ -228,18 +228,26 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
         out: list[dict[str, Any]] = []
         for f in feats:
             p = f.get("properties", {})
-            f_ward = str(p.get("ward") or "")
+            f_ward = str(p.get("ward") or p.get("village_name") or p.get("taluk_name") or "")
+            f_village = str(p.get("village_name") or "")
 
             # ABAC filtering: only include features within user's allowed jurisdiction
-            if user.allowed_wards and f_ward and not user.can_access_ward(f_ward):
-                continue
+            if user.allowed_wards:
+                matched_scope = any(
+                    w.lower() in f_ward.lower() or w.lower() in f_village.lower()
+                    for w in user.allowed_wards
+                )
+                if not matched_scope:
+                    continue
 
             if min_confidence and float(p.get("confidence") or 0) < min_confidence:
                 continue
             if grade and p.get("confidence_grade") != grade.upper():
                 continue
-            if ward and f_ward != str(ward):
-                continue
+            if ward and ward.lower() != "all":
+                w_target = ward.lower()
+                if w_target not in f_ward.lower() and w_target not in f_village.lower():
+                    continue
             if ulpin and p.get("ulpin") != ulpin:
                 continue
             if survey_number and str(p.get("survey_number") or "") != str(survey_number):
