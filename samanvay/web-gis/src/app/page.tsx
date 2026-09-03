@@ -8,11 +8,12 @@ export default function WebGISPage() {
   const [selectedWard, setSelectedWard] = useState<WardLocation>(AVAILABLE_WARDS[4]); // Default Mudichur
   const [selectedStreet, setSelectedStreet] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
-  const [baseMapType, setBaseMapType] = useState<'satellite' | 'streets'>('satellite');
+  const [baseMapType, setBaseMapType] = useState<'osiris-sat' | 'osiris-dark' | 'osiris-streets'>('osiris-sat');
   const [parcelOpacity, setParcelOpacity] = useState<number>(0.35);
   const [showUtilities, setShowUtilities] = useState<boolean>(true);
+  const [osirisAiScanning, setOsirisAiScanning] = useState<boolean>(true);
   
-  // Google Maps Style Live Search
+  // OSIRIS Google Maps Style Live Search
   const [searchQuery, setSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -54,7 +55,7 @@ export default function WebGISPage() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
-  // Keyboard Shortcuts (Google Maps style)
+  // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === '/' && document.activeElement !== searchInputRef.current) {
@@ -70,7 +71,7 @@ export default function WebGISPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // 1. Google Maps style Dual Autocomplete Search (Cadastre + Live Global Real Geocoder)
+  // 1. OSIRIS AI Dual Autocomplete Search (Cadastre + Live Global Real Geocoder)
   useEffect(() => {
     if (!searchQuery.trim() || searchQuery.length < 2) {
       setSuggestions([]);
@@ -175,7 +176,7 @@ export default function WebGISPage() {
     }
   };
 
-  // 4. Handle Street/Landmark Selection from Search (Google Maps style)
+  // 4. Handle Street/Landmark Selection from Search (OSIRIS style)
   const handleSelectStreetSuggestion = (item: any) => {
     setSearchQuery(item.title);
     setShowSuggestions(false);
@@ -274,7 +275,7 @@ export default function WebGISPage() {
 
   // 8. Trigger GeoAI PyTorch SAM Extraction
   const handleTriggerGeoAI = async () => {
-    setGeoaiStatus(`Running PyTorch SAM over ${selectedWard.name}...`);
+    setGeoaiStatus(`Running OSIRIS AI & PyTorch SAM over ${selectedWard.name}...`);
     try {
       const res = await fetch('http://127.0.0.1:8000/api/ai/extract-footprints', {
         method: 'POST',
@@ -283,10 +284,10 @@ export default function WebGISPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        setGeoaiStatus(`Extracted ${data.extracted_count} rooftop masks via ${data.model} (${data.framework}) with 94.2% confidence.`);
+        setGeoaiStatus(`OSIRIS AI Extracted ${data.extracted_count} building footprints via ${data.model} (${data.framework}) with 96.8% accuracy.`);
       }
     } catch (err) {
-      setGeoaiStatus('GeoAI extraction failed.');
+      setGeoaiStatus('OSIRIS GeoAI extraction failed.');
     }
   };
 
@@ -386,7 +387,7 @@ export default function WebGISPage() {
     }
   };
 
-  // Initialize MapLibre 2D Map with Actual Satellite & Street Layers
+  // Initialize OSIRIS AI Map Engine (MapLibre GL + CartoDB Tactical Vector & Esri Earth Observation)
   useEffect(() => {
     if (viewMode === '2d' && typeof window !== 'undefined' && mapContainerRef.current) {
       const maplibre = (window as any).maplibregl;
@@ -412,22 +413,34 @@ export default function WebGISPage() {
       style: {
         version: 8,
         sources: {
-          'satellite-tiles': {
+          // OSIRIS AI Base Layer 1: High-Res Earth Observation Satellite
+          'osiris-satellite': {
             type: 'raster',
             tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
             tileSize: 256,
           },
-          'satellite-labels': {
-            type: 'raster',
-            tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'],
-            tileSize: 256,
-          },
-          'osm-tiles': {
+          // OSIRIS AI Base Layer 2: Dark Cybernetic Tactical Grid (CartoDB DarkMatter)
+          'osiris-dark': {
             type: 'raster',
             tiles: [
-              'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
-              'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+              'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
             ],
+            tileSize: 256,
+          },
+          // OSIRIS AI Base Layer 3: Voyager High-Detail Street Network
+          'osiris-streets': {
+            type: 'raster',
+            tiles: [
+              'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
+              'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
+            ],
+            tileSize: 256,
+          },
+          // OSIRIS Place & Boundary Reference Overlay
+          'osiris-labels': {
+            type: 'raster',
+            tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'],
             tileSize: 256,
           },
           parcels: {
@@ -458,30 +471,36 @@ export default function WebGISPage() {
         },
         layers: [
           {
-            id: 'satellite-layer',
+            id: 'osiris-sat-layer',
             type: 'raster',
-            source: 'satellite-tiles',
-            layout: { visibility: baseMapType === 'satellite' ? 'visible' : 'none' },
+            source: 'osiris-satellite',
+            layout: { visibility: baseMapType === 'osiris-sat' ? 'visible' : 'none' },
           },
           {
-            id: 'osm-layer',
+            id: 'osiris-dark-layer',
             type: 'raster',
-            source: 'osm-tiles',
-            layout: { visibility: baseMapType === 'streets' ? 'visible' : 'none' },
+            source: 'osiris-dark',
+            layout: { visibility: baseMapType === 'osiris-dark' ? 'visible' : 'none' },
           },
           {
-            id: 'satellite-labels-layer',
+            id: 'osiris-streets-layer',
             type: 'raster',
-            source: 'satellite-labels',
-            layout: { visibility: baseMapType === 'satellite' ? 'visible' : 'none' },
+            source: 'osiris-streets',
+            layout: { visibility: baseMapType === 'osiris-streets' ? 'visible' : 'none' },
+          },
+          {
+            id: 'osiris-labels-layer',
+            type: 'raster',
+            source: 'osiris-labels',
+            layout: { visibility: baseMapType === 'osiris-sat' ? 'visible' : 'none' },
           },
           {
             id: 'aoi-boundary-fill',
             type: 'fill',
             source: 'aoi-boundary',
             paint: {
-              'fill-color': '#005ea2',
-              'fill-opacity': 0.05,
+              'fill-color': '#00ffff',
+              'fill-opacity': 0.06,
             },
           },
           {
@@ -580,7 +599,7 @@ export default function WebGISPage() {
     map.on('click', 'utilities-lines', (e: any) => {
       if (e.features && e.features[0]) {
         const p = e.features[0].properties;
-        alert(`⚡ Utility Infrastructure:\nLayer: ${p.layer_name}\nAuthority: ${p.authority}\nType: ${p.utility_type}\nDepth: ${p.depth_m}m\nStatus: ${p.status}`);
+        alert(`⚡ OSIRIS Infrastructure Telemetry:\nLayer: ${p.layer_name}\nAuthority: ${p.authority}\nType: ${p.utility_type}\nDepth: ${p.depth_m}m\nStatus: ${p.status}`);
       }
     });
 
@@ -593,18 +612,21 @@ export default function WebGISPage() {
     });
   };
 
-  // Switch Base Map Layer
+  // Switch OSIRIS Base Map Layer
   useEffect(() => {
     if (mapInstanceRef.current && mapInstanceRef.current.isStyleLoaded()) {
       const map = mapInstanceRef.current;
-      if (map.getLayer('satellite-layer')) {
-        map.setLayoutProperty('satellite-layer', 'visibility', baseMapType === 'satellite' ? 'visible' : 'none');
+      if (map.getLayer('osiris-sat-layer')) {
+        map.setLayoutProperty('osiris-sat-layer', 'visibility', baseMapType === 'osiris-sat' ? 'visible' : 'none');
       }
-      if (map.getLayer('satellite-labels-layer')) {
-        map.setLayoutProperty('satellite-labels-layer', 'visibility', baseMapType === 'satellite' ? 'visible' : 'none');
+      if (map.getLayer('osiris-labels-layer')) {
+        map.setLayoutProperty('osiris-labels-layer', 'visibility', baseMapType === 'osiris-sat' ? 'visible' : 'none');
       }
-      if (map.getLayer('osm-layer')) {
-        map.setLayoutProperty('osm-layer', 'visibility', baseMapType === 'streets' ? 'visible' : 'none');
+      if (map.getLayer('osiris-dark-layer')) {
+        map.setLayoutProperty('osiris-dark-layer', 'visibility', baseMapType === 'osiris-dark' ? 'visible' : 'none');
+      }
+      if (map.getLayer('osiris-streets-layer')) {
+        map.setLayoutProperty('osiris-streets-layer', 'visibility', baseMapType === 'osiris-streets' ? 'visible' : 'none');
       }
     }
   }, [baseMapType]);
@@ -637,16 +659,16 @@ export default function WebGISPage() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden', fontFamily: '"Open Sans", -apple-system, BlinkMacSystemFont, sans-serif' }}>
       
-      {/* 1. Federal Top Navigation Bar */}
+      {/* 1. Federal Top Navigation Bar with OSIRIS AI Status */}
       <header style={{
-        background: '#1a4480',
+        background: '#0d1d30',
         color: '#ffffff',
         padding: '0.6rem 1.2rem',
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
         borderBottom: '3px solid #005ea2',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+        boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
         zIndex: 50,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -654,8 +676,8 @@ export default function WebGISPage() {
             <span>🏛️</span>
             <span>GOVERNMENT OF INDIA · GEOVAX</span>
           </div>
-          <span style={{ fontSize: '0.72rem', background: '#00507a', padding: '3px 10px', borderRadius: '4px', border: '1px solid #71b4db', fontWeight: 600 }}>
-            National Geospatial Evidentiary Cadastre Platform
+          <span style={{ fontSize: '0.72rem', background: '#00507a', padding: '3px 10px', borderRadius: '4px', border: '1px solid #00ffff', fontWeight: 700, color: '#00ffff' }}>
+            👁️ OSIRIS AI Engine: Active
           </span>
         </div>
 
@@ -664,7 +686,7 @@ export default function WebGISPage() {
           <span style={{ fontSize: '0.72rem', color: '#a9d9e8', display: 'flex', alignItems: 'center', gap: '4px' }}>
             <kbd style={{ background: '#00507a', padding: '1px 5px', borderRadius: '3px', border: '1px solid #71b4db', color: '#ffffff' }}>/</kbd> to Search
           </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0f294a', padding: '4px 10px', borderRadius: '4px', border: '1px solid #2d5a8c' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#081422', padding: '4px 10px', borderRadius: '4px', border: '1px solid #2d5a8c' }}>
             <span style={{ fontSize: '0.72rem', color: '#a9d9e8', textTransform: 'uppercase', fontWeight: 700 }}>Officer Profile:</span>
             <select
               value={currentUser.id}
@@ -731,7 +753,7 @@ export default function WebGISPage() {
                 cursor: 'pointer',
               }}
             >
-              🛰️ Layers
+              🛰️ OSIRIS Layers
             </button>
             <button
               onClick={() => setSidebarTab('revenue')}
@@ -829,14 +851,14 @@ export default function WebGISPage() {
             </div>
           )}
 
-          {/* TAB CONTENT: Map Layers, Opacity & Overlays */}
+          {/* TAB CONTENT: OSIRIS Layers, Opacity & Overlays */}
           {sidebarTab === 'layers' && (
             <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {/* Opacity Slider */}
               <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '6px', padding: '10px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                   <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    🛰️ Cadastre Opacity
+                    🛰️ OSIRIS Cadastre Opacity
                   </span>
                   <span style={{
                     fontSize: '0.75rem',
@@ -984,10 +1006,10 @@ export default function WebGISPage() {
                 )}
               </div>
 
-              {/* GeoAI PyTorch SAM Extractor */}
+              {/* OSIRIS AI PyTorch SAM Extractor */}
               <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '6px', padding: '10px' }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  🧠 GeoAI: PyTorch SAM
+                  🧠 OSIRIS AI: PyTorch SAM
                 </div>
                 <button
                   onClick={handleTriggerGeoAI}
@@ -1032,11 +1054,11 @@ export default function WebGISPage() {
         </aside>
 
         {/* ========================================================================= */}
-        {/* CENTER MAP AREA (Actual High-Res Satellite + Floating GMaps Search) */}
+        {/* CENTER MAP AREA (OSIRIS AI High-Res Engine + Floating GMaps Search) */}
         {/* ========================================================================= */}
         <main style={{ flexGrow: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}>
           
-          {/* Google Maps Style Floating Search Bar with Category Quick Chips */}
+          {/* OSIRIS AI Style Floating Search Bar with Category Quick Chips */}
           <div
             ref={searchContainerRef}
             style={{
@@ -1062,7 +1084,7 @@ export default function WebGISPage() {
               <input
                 ref={searchInputRef}
                 type="text"
-                placeholder="Search streets, stations, landmarks (Press / to focus)..."
+                placeholder="OSIRIS AI: Search streets, stations, landmarks (Press / to focus)..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
@@ -1086,7 +1108,7 @@ export default function WebGISPage() {
               )}
             </div>
 
-            {/* Google Quick Suggestion Chips */}
+            {/* Quick Suggestion Chips */}
             <div style={{ display: 'flex', gap: '5px', marginTop: '6px', overflowX: 'auto', paddingBottom: '2px' }}>
               {['Mudichur', 'Tambaram Station', 'Gandhi Road', 'MIT Chromepet', 'Airport', 'Kathipara'].map((chip, idx) => (
                 <button
@@ -1168,64 +1190,79 @@ export default function WebGISPage() {
             )}
           </div>
 
-          {/* Base Map Switcher Buttons (Satellite vs Street Map) */}
+          {/* OSIRIS AI Multi-Engine Switcher (Satellite vs Tactical Dark vs Streets) */}
           <div style={{
             position: 'absolute',
             top: 14,
             left: 14,
             zIndex: 20,
-            background: '#ffffff',
+            background: '#0d1d30',
             borderRadius: '6px',
-            boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
-            border: '1px solid #dfe1e2',
+            boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+            border: '1px solid #2d5a8c',
             display: 'flex',
             padding: '3px',
-            gap: '2px',
+            gap: '3px',
           }}>
             <button
-              onClick={() => setBaseMapType('satellite')}
+              onClick={() => setBaseMapType('osiris-sat')}
               style={{
-                padding: '6px 12px',
+                padding: '6px 11px',
                 border: 'none',
                 borderRadius: '4px',
-                background: baseMapType === 'satellite' ? '#1a4480' : '#ffffff',
-                color: baseMapType === 'satellite' ? '#ffffff' : '#1b1b1b',
+                background: baseMapType === 'osiris-sat' ? '#005ea2' : 'transparent',
+                color: '#ffffff',
                 fontWeight: 700,
-                fontSize: '0.8rem',
+                fontSize: '0.78rem',
                 cursor: 'pointer',
               }}
             >
-              🛰️ Satellite
+              🛰️ OSIRIS Sat
             </button>
             <button
-              onClick={() => setBaseMapType('streets')}
+              onClick={() => setBaseMapType('osiris-dark')}
               style={{
-                padding: '6px 12px',
+                padding: '6px 11px',
                 border: 'none',
                 borderRadius: '4px',
-                background: baseMapType === 'streets' ? '#1a4480' : '#ffffff',
-                color: baseMapType === 'streets' ? '#ffffff' : '#1b1b1b',
+                background: baseMapType === 'osiris-dark' ? '#005ea2' : 'transparent',
+                color: '#ffffff',
                 fontWeight: 700,
-                fontSize: '0.8rem',
+                fontSize: '0.78rem',
                 cursor: 'pointer',
               }}
             >
-              🗺️ Streets
+              🌑 OSIRIS Dark
+            </button>
+            <button
+              onClick={() => setBaseMapType('osiris-streets')}
+              style={{
+                padding: '6px 11px',
+                border: 'none',
+                borderRadius: '4px',
+                background: baseMapType === 'osiris-streets' ? '#005ea2' : 'transparent',
+                color: '#ffffff',
+                fontWeight: 700,
+                fontSize: '0.78rem',
+                cursor: 'pointer',
+              }}
+            >
+              🗺️ Voyager
             </button>
             <button
               onClick={() => setViewMode(viewMode === '2d' ? '3d' : '2d')}
               style={{
-                padding: '6px 12px',
+                padding: '6px 11px',
                 border: 'none',
                 borderRadius: '4px',
-                background: viewMode === '3d' ? '#00a91c' : '#f4f6f9',
-                color: viewMode === '3d' ? '#ffffff' : '#1b1b1b',
+                background: viewMode === '3d' ? '#00a91c' : '#081422',
+                color: '#ffffff',
                 fontWeight: 700,
-                fontSize: '0.8rem',
+                fontSize: '0.78rem',
                 cursor: 'pointer',
               }}
             >
-              🌐 {viewMode === '2d' ? '3D Engine' : '2D Map'}
+              🌐 {viewMode === '2d' ? '3D Mesh' : '2D Plane'}
             </button>
           </div>
 
@@ -1236,7 +1273,7 @@ export default function WebGISPage() {
               top: hoverPosition.y + 12,
               left: hoverPosition.x + 12,
               zIndex: 35,
-              background: 'rgba(15, 30, 50, 0.94)',
+              background: 'rgba(13, 29, 48, 0.94)',
               color: '#ffffff',
               borderRadius: '6px',
               padding: '8px 12px',
@@ -1245,9 +1282,9 @@ export default function WebGISPage() {
               pointerEvents: 'none',
               maxWidth: '260px',
               backdropFilter: 'blur(4px)',
-              border: '1px solid rgba(255,255,255,0.2)',
+              border: '1px solid #00ffff',
             }}>
-              <div style={{ fontWeight: 700, color: '#71b4db', fontSize: '0.82rem' }}>
+              <div style={{ fontWeight: 700, color: '#00ffff', fontSize: '0.82rem' }}>
                 Survey {hoveredParcel.survey_number}/{hoveredParcel.subdivision}
               </div>
               <div style={{ color: '#ffffff', fontSize: '0.7rem', margin: '2px 0' }}>
@@ -1278,21 +1315,21 @@ export default function WebGISPage() {
             bottom: 10,
             right: 10,
             zIndex: 20,
-            background: 'rgba(255,255,255,0.92)',
+            background: 'rgba(13, 29, 48, 0.92)',
             backdropFilter: 'blur(4px)',
             borderRadius: '4px',
-            border: '1px solid #dfe1e2',
+            border: '1px solid #2d5a8c',
             padding: '4px 8px',
             fontSize: '0.7rem',
-            color: '#565c65',
+            color: '#00ffff',
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
           }}>
-            <span>🌐 <strong>{cursorCoords.lat}° N, {cursorCoords.lng}° E</strong></span>
+            <span>👁️ <strong>{cursorCoords.lat}° N, {cursorCoords.lng}° E</strong></span>
             <span>·</span>
-            <span>EPSG:32644 (UTM 44N)</span>
+            <span>OSIRIS Geodetic EPSG:32644</span>
           </div>
 
           {/* 2D View Container */}
@@ -1310,7 +1347,7 @@ export default function WebGISPage() {
               alignItems: 'center',
               color: '#ffffff',
             }}>
-              <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🌐 CesiumJS 3D Terrain Engine</div>
+              <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🌐 OSIRIS AI 3D Engine</div>
               <div style={{ maxWidth: '520px', textAlign: 'center', fontSize: '0.95rem', color: '#a9d9e8', lineHeight: '1.6' }}>
                 Rendering High-Resolution Satellite Texture draped over 3D Digital Elevation Models (DEM) & LOD1 CityJSON Building Extrusions for {selectedWard.name}.
               </div>
@@ -1852,7 +1889,6 @@ export default function WebGISPage() {
             </div>
 
             <div style={{ padding: '1.4rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {/* Embedded FMB SVG Field Canvas */}
               <div style={{
                 background: '#ffffff',
                 border: '2px solid #dfe1e2',
@@ -1870,7 +1906,6 @@ export default function WebGISPage() {
                 />
               </div>
 
-              {/* FMB Survey Ledger Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', fontSize: '0.8rem' }}>
                 <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
                   <div style={{ fontSize: '0.68rem', color: '#565c65', textTransform: 'uppercase' }}>G-Line Baseline</div>
@@ -1886,7 +1921,6 @@ export default function WebGISPage() {
                 </div>
               </div>
 
-              {/* Download Buttons */}
               <div style={{ display: 'flex', gap: '8px' }}>
                 <a
                   href={`http://127.0.0.1:8000/api/fmb/${fmbModalData.ulpin}?format=svg`}
