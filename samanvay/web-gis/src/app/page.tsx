@@ -18,9 +18,16 @@ export default function WebGISPage() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
 
-  // Deep Legal Case Modal State
+  // HUD and Hover State
+  const [cursorCoords, setCursorCoords] = useState<{ lng: string; lat: string }>({ lng: '80.0862', lat: '12.9248' });
+  const [hoveredParcel, setHoveredParcel] = useState<any | null>(null);
+  const [hoverPosition, setHoverPosition] = useState<{ x: number; y: number } | null>(null);
+
+  // Deep Modals: Legal Case & Interactive FMB CAD Studio
   const [activeCaseModal, setActiveCaseModal] = useState<any | null>(null);
+  const [fmbModalData, setFmbModalData] = useState<any | null>(null);
   const [noticeIssued, setNoticeIssued] = useState(false);
+  const [copiedUlpin, setCopiedUlpin] = useState(false);
 
   const [adjudicationQueue, setAdjudicationQueue] = useState<any[]>([]);
   const [wardCourtCases, setWardCourtCases] = useState<any[]>([]);
@@ -44,7 +51,24 @@ export default function WebGISPage() {
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
+
+  // Keyboard Shortcuts (Google Maps style)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === '/' && document.activeElement !== searchInputRef.current) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      } else if (e.key === 'Escape') {
+        setShowSuggestions(false);
+        setActiveCaseModal(null);
+        setFmbModalData(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // 1. Google Maps style Dual Autocomplete Search (Cadastre + Live Global Real Geocoder)
   useEffect(() => {
@@ -89,7 +113,7 @@ export default function WebGISPage() {
               zoom: 16.5,
               type: 'gmap_poi',
               icon: p.osm_value === 'railway' ? '🚉' : (p.osm_value === 'hospital' ? '🏥' : (p.osm_value === 'school' ? '🏫' : '📍')),
-              badge: p.osm_value || 'Real Landmark',
+              badge: p.osm_value || 'Landmark',
             };
           });
           combined.push(...geoHits);
@@ -183,28 +207,36 @@ export default function WebGISPage() {
     setActiveCaseModal(courtCase);
     setNoticeIssued(false);
 
-    // Find and select corresponding parcel
     const matchedP = wardParcels.find((p) => p.ulpin === courtCase.ulpin);
     if (matchedP) {
       setSelectedParcel(matchedP);
     }
 
-    // Fly to parcel location if available
-    if (mapInstanceRef.current) {
-      const feature = wardParcels.find((p) => p.ulpin === courtCase.ulpin);
-      if (feature && selectedWard.center) {
-        mapInstanceRef.current.flyTo({
-          center: selectedWard.center,
-          zoom: 16.8,
-          speed: 1.4,
-          curve: 1.2,
-          essential: true,
-        });
-      }
+    if (mapInstanceRef.current && selectedWard.center) {
+      mapInstanceRef.current.flyTo({
+        center: selectedWard.center,
+        zoom: 16.8,
+        speed: 1.4,
+        curve: 1.2,
+        essential: true,
+      });
     }
   };
 
-  // 6. Resolve Conflict & Emit Kafka Event
+  // 6. Open In-App Interactive FMB CAD Studio
+  const handleOpenFmbStudio = async (ulpin: string) => {
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/api/fmb/${ulpin}`);
+      if (res.ok) {
+        const data = await res.json();
+        setFmbModalData(data);
+      }
+    } catch (err) {
+      console.error('Failed fetching FMB data', err);
+    }
+  };
+
+  // 7. Resolve Conflict & Emit Kafka Event
   const handleResolveConflict = async (caseItem: any) => {
     setIsResolving(true);
     try {
@@ -240,7 +272,7 @@ export default function WebGISPage() {
     }
   };
 
-  // 7. Trigger GeoAI PyTorch SAM Extraction
+  // 8. Trigger GeoAI PyTorch SAM Extraction
   const handleTriggerGeoAI = async () => {
     setGeoaiStatus(`Running PyTorch SAM over ${selectedWard.name}...`);
     try {
@@ -258,12 +290,11 @@ export default function WebGISPage() {
     }
   };
 
-  // 8. Update Map Layer and Calculate Ward Aggregates
+  // 9. Update Map Layer and Calculate Ward Aggregates
   const updateMapData = async (ward: WardLocation, user: UserProfile) => {
     if (!mapInstanceRef.current) return;
     const map = mapInstanceRef.current;
 
-    // Check ABAC scope
     if (user.wardScope && user.wardScope.length > 0 && ward.id !== 'all') {
       const hasPermission = user.wardScope.some((w) => w.toLowerCase() === ward.id.toLowerCase());
       if (!hasPermission) {
@@ -517,6 +548,27 @@ export default function WebGISPage() {
       zoom: selectedWard.zoom,
     });
 
+    map.on('mousemove', (e: any) => {
+      setCursorCoords({
+        lng: e.lngLat.lng.toFixed(5),
+        lat: e.lngLat.lat.toFixed(5),
+      });
+    });
+
+    map.on('mousemove', 'parcels-fill', (e: any) => {
+      if (e.features && e.features[0]) {
+        map.getCanvas().style.cursor = 'pointer';
+        setHoveredParcel(e.features[0].properties);
+        setHoverPosition({ x: e.point.x, y: e.point.y });
+      }
+    });
+
+    map.on('mouseleave', 'parcels-fill', () => {
+      map.getCanvas().style.cursor = '';
+      setHoveredParcel(null);
+      setHoverPosition(null);
+    });
+
     map.on('click', 'parcels-fill', (e: any) => {
       if (e.features && e.features[0]) {
         const props = e.features[0].properties;
@@ -531,9 +583,6 @@ export default function WebGISPage() {
         alert(`⚡ Utility Infrastructure:\nLayer: ${p.layer_name}\nAuthority: ${p.authority}\nType: ${p.utility_type}\nDepth: ${p.depth_m}m\nStatus: ${p.status}`);
       }
     });
-
-    map.on('mouseenter', 'parcels-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
-    map.on('mouseleave', 'parcels-fill', () => { map.getCanvas().style.cursor = ''; });
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     mapInstanceRef.current = map;
@@ -606,12 +655,15 @@ export default function WebGISPage() {
             <span>GOVERNMENT OF INDIA · GEOVAX</span>
           </div>
           <span style={{ fontSize: '0.72rem', background: '#00507a', padding: '3px 10px', borderRadius: '4px', border: '1px solid #71b4db', fontWeight: 600 }}>
-            Vandalur – Guindy GST Land Records
+            National Geospatial Evidentiary Cadastre Platform
           </span>
         </div>
 
-        {/* Top Right Controls: Officer Role Switcher */}
+        {/* Top Right Controls: Officer Role Switcher + Shortcuts Badge */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <span style={{ fontSize: '0.72rem', color: '#a9d9e8', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <kbd style={{ background: '#00507a', padding: '1px 5px', borderRadius: '3px', border: '1px solid #71b4db', color: '#ffffff' }}>/</kbd> to Search
+          </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0f294a', padding: '4px 10px', borderRadius: '4px', border: '1px solid #2d5a8c' }}>
             <span style={{ fontSize: '0.72rem', color: '#a9d9e8', textTransform: 'uppercase', fontWeight: 700 }}>Officer Profile:</span>
             <select
@@ -704,7 +756,7 @@ export default function WebGISPage() {
             <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
               <div>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  Select Regional Jurisdiction
+                  Select Regional Jurisdiction (Vandalur ➔ Guindy)
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
                   {AVAILABLE_WARDS.filter((w) => w.id !== 'all').map((w) => (
@@ -886,7 +938,6 @@ export default function WebGISPage() {
           {/* TAB CONTENT: Revenue Adjudication & GeoAI Engine */}
           {sidebarTab === 'revenue' && (
             <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {/* Adjudication Queue */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                   <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase' }}>
@@ -985,7 +1036,7 @@ export default function WebGISPage() {
         {/* ========================================================================= */}
         <main style={{ flexGrow: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}>
           
-          {/* Google Maps Style Floating Search Bar */}
+          {/* Google Maps Style Floating Search Bar with Category Quick Chips */}
           <div
             ref={searchContainerRef}
             style={{
@@ -994,7 +1045,7 @@ export default function WebGISPage() {
               left: '50%',
               transform: 'translateX(-50%)',
               zIndex: 30,
-              width: '480px',
+              width: '520px',
             }}
           >
             <div style={{
@@ -1009,8 +1060,9 @@ export default function WebGISPage() {
             }}>
               <span style={{ fontSize: '1.2rem', color: '#005ea2' }}>🔍</span>
               <input
+                ref={searchInputRef}
                 type="text"
-                placeholder="Search streets, stations, landmarks (e.g. Gandhi Rd, Mudichur, Airport)..."
+                placeholder="Search streets, stations, landmarks (Press / to focus)..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
@@ -1034,11 +1086,36 @@ export default function WebGISPage() {
               )}
             </div>
 
+            {/* Google Quick Suggestion Chips */}
+            <div style={{ display: 'flex', gap: '5px', marginTop: '6px', overflowX: 'auto', paddingBottom: '2px' }}>
+              {['Mudichur', 'Tambaram Station', 'Gandhi Road', 'MIT Chromepet', 'Airport', 'Kathipara'].map((chip, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setSearchQuery(chip)}
+                  style={{
+                    background: 'rgba(255,255,255,0.92)',
+                    backdropFilter: 'blur(4px)',
+                    border: '1px solid #dfe1e2',
+                    borderRadius: '14px',
+                    padding: '3px 10px',
+                    fontSize: '0.72rem',
+                    fontWeight: 600,
+                    color: '#1a4480',
+                    cursor: 'pointer',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  📍 {chip}
+                </button>
+              ))}
+            </div>
+
             {/* Live Autocomplete Dropdown */}
             {showSuggestions && suggestions.length > 0 && (
               <div style={{
                 position: 'absolute',
-                top: '50px',
+                top: '78px',
                 left: 0,
                 right: 0,
                 background: '#ffffff',
@@ -1150,6 +1227,72 @@ export default function WebGISPage() {
             >
               🌐 {viewMode === '2d' ? '3D Engine' : '2D Map'}
             </button>
+          </div>
+
+          {/* Interactive Hover Tooltip over Land Parcels */}
+          {hoveredParcel && hoverPosition && (
+            <div style={{
+              position: 'absolute',
+              top: hoverPosition.y + 12,
+              left: hoverPosition.x + 12,
+              zIndex: 35,
+              background: 'rgba(15, 30, 50, 0.94)',
+              color: '#ffffff',
+              borderRadius: '6px',
+              padding: '8px 12px',
+              fontSize: '0.75rem',
+              boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+              pointerEvents: 'none',
+              maxWidth: '260px',
+              backdropFilter: 'blur(4px)',
+              border: '1px solid rgba(255,255,255,0.2)',
+            }}>
+              <div style={{ fontWeight: 700, color: '#71b4db', fontSize: '0.82rem' }}>
+                Survey {hoveredParcel.survey_number}/{hoveredParcel.subdivision}
+              </div>
+              <div style={{ color: '#ffffff', fontSize: '0.7rem', margin: '2px 0' }}>
+                ULPIN: {hoveredParcel.ulpin}
+              </div>
+              <div style={{ color: '#dfe1e2', fontSize: '0.7rem' }}>
+                Extent: {hoveredParcel.computed_extent_m2} m² · {hoveredParcel.street_name || selectedWard.id}
+              </div>
+              <div style={{ marginTop: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{
+                  padding: '1px 5px',
+                  borderRadius: '3px',
+                  fontSize: '0.65rem',
+                  fontWeight: 700,
+                  background: hoveredParcel.confidence_grade === 'A' ? '#00e676' : '#ff5252',
+                  color: '#000000',
+                }}>
+                  Grade {hoveredParcel.confidence_grade || 'C'}
+                </span>
+                <span style={{ fontSize: '0.65rem', color: '#a9d9e8' }}>Click to inspect</span>
+              </div>
+            </div>
+          )}
+
+          {/* Real-time Map Coordinates HUD */}
+          <div style={{
+            position: 'absolute',
+            bottom: 10,
+            right: 10,
+            zIndex: 20,
+            background: 'rgba(255,255,255,0.92)',
+            backdropFilter: 'blur(4px)',
+            borderRadius: '4px',
+            border: '1px solid #dfe1e2',
+            padding: '4px 8px',
+            fontSize: '0.7rem',
+            color: '#565c65',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+          }}>
+            <span>🌐 <strong>{cursorCoords.lat}° N, {cursorCoords.lng}° E</strong></span>
+            <span>·</span>
+            <span>EPSG:32644 (UTM 44N)</span>
           </div>
 
           {/* 2D View Container */}
@@ -1423,8 +1566,28 @@ export default function WebGISPage() {
               ) : (
                 <>
                   <div style={{ background: '#f4f6f9', border: '2px solid #005ea2', borderRadius: '4px', padding: '10px' }}>
-                    <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase', fontWeight: 700 }}>
-                      Bhu-Aadhaar National Identifier
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase', fontWeight: 700 }}>
+                        Bhu-Aadhaar 14-Digit ULPIN
+                      </span>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard?.writeText(selectedParcel.ulpin);
+                          setCopiedUlpin(true);
+                          setTimeout(() => setCopiedUlpin(false), 2000);
+                        }}
+                        style={{
+                          background: copiedUlpin ? '#00a91c' : '#005ea2',
+                          color: '#ffffff',
+                          border: 'none',
+                          padding: '2px 6px',
+                          fontSize: '0.68rem',
+                          borderRadius: '3px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {copiedUlpin ? '✓ Copied' : '📋 Copy'}
+                      </button>
                     </div>
                     <div style={{ fontSize: '1.15rem', fontWeight: 700, color: '#005ea2', margin: '2px 0' }}>
                       {selectedParcel.ulpin}
@@ -1453,24 +1616,29 @@ export default function WebGISPage() {
                     </div>
                   </div>
 
+                  {/* FMB CAD Studio Action Button */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <a
-                      href={`http://127.0.0.1:8000/api/fmb/${selectedParcel.ulpin}?format=svg`}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      onClick={() => handleOpenFmbStudio(selectedParcel.ulpin)}
                       style={{
                         background: '#005ea2',
                         color: '#ffffff',
-                        padding: '8px',
+                        padding: '9px',
                         textAlign: 'center',
-                        fontSize: '0.78rem',
+                        fontSize: '0.8rem',
                         fontWeight: 700,
-                        textDecoration: 'none',
+                        border: 'none',
                         borderRadius: '4px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
                       }}
                     >
-                      📐 View Generative FMB Field Sketch (SVG)
-                    </a>
+                      <span>📐</span>
+                      <span>Launch In-App FMB CAD Studio</span>
+                    </button>
                   </div>
                 </>
               )}
@@ -1480,7 +1648,7 @@ export default function WebGISPage() {
       </div>
 
       {/* ========================================================================= */}
-      {/* DEEP INTERACTIVE JUDICIAL CASE MODAL (Shows when case is touched) */}
+      {/* 1. DEEP INTERACTIVE JUDICIAL CASE MODAL */}
       {/* ========================================================================= */}
       {activeCaseModal && (
         <div style={{
@@ -1509,7 +1677,6 @@ export default function WebGISPage() {
             display: 'flex',
             flexDirection: 'column',
           }}>
-            {/* Modal Header */}
             <div style={{
               background: '#1a4480',
               color: '#ffffff',
@@ -1520,7 +1687,7 @@ export default function WebGISPage() {
             }}>
               <div>
                 <div style={{ fontSize: '0.72rem', color: '#a9d9e8', textTransform: 'uppercase', fontWeight: 700 }}>
-                  ⚖️ e-Courts National Judicial Data Grid · Case Details
+                  ⚖️ e-Courts National Judicial Data Grid · Certified Dossier
                 </div>
                 <div style={{ fontSize: '1.25rem', fontWeight: 700, marginTop: '2px' }}>
                   {activeCaseModal.case_number}
@@ -1546,10 +1713,7 @@ export default function WebGISPage() {
               </button>
             </div>
 
-            {/* Modal Body */}
             <div style={{ padding: '1.4rem', display: 'flex', flexDirection: 'column', gap: '1rem', fontSize: '0.85rem' }}>
-              
-              {/* Injunction Status Banner */}
               <div style={{
                 background: '#f8dfe2',
                 border: '1.5px solid #d83933',
@@ -1567,7 +1731,6 @@ export default function WebGISPage() {
                 </div>
               </div>
 
-              {/* Judicial Metadata Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
                   <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>CNR Number</div>
@@ -1589,7 +1752,6 @@ export default function WebGISPage() {
                 </div>
               </div>
 
-              {/* Parties Section */}
               <div style={{ border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px', background: '#ffffff' }}>
                 <div style={{ fontSize: '0.72rem', color: '#565c65', textTransform: 'uppercase', fontWeight: 700, marginBottom: '4px' }}>
                   Litigant Parties
@@ -1600,19 +1762,6 @@ export default function WebGISPage() {
                 </div>
               </div>
 
-              {/* Encumbrance & Lis Pendens Flags */}
-              <div style={{ border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px', background: '#fffcf2' }}>
-                <div style={{ fontSize: '0.72rem', color: '#8c5b00', textTransform: 'uppercase', fontWeight: 700, marginBottom: '4px' }}>
-                  📜 Encumbrance Certificate (EC) Lis Pendens Entries
-                </div>
-                <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '0.8rem', color: '#565c65' }}>
-                  {activeCaseModal.ec_flags.map((flag: string, i: number) => (
-                    <li key={i}>{flag}</li>
-                  ))}
-                </ul>
-              </div>
-
-              {/* Statutory Actions */}
               <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
                 <button
                   onClick={() => setNoticeIssued(true)}
@@ -1630,22 +1779,153 @@ export default function WebGISPage() {
                 >
                   {noticeIssued ? '✓ Section 7 Notice Issued to Tahsildar' : '🛡️ Issue Statutory Section 7 Notice'}
                 </button>
-                <button
-                  onClick={() => alert(`Downloading Certified Interim Injunction Order for ${activeCaseModal.case_number} (PDF)...`)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 2. IN-APP INTERACTIVE FMB CAD STUDIO MODAL */}
+      {/* ========================================================================= */}
+      {fmbModalData && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 15, 35, 0.8)',
+          backdropFilter: 'blur(5px)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 100,
+          padding: '20px',
+        }}>
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '8px',
+            width: '740px',
+            maxWidth: '95vw',
+            maxHeight: '90vh',
+            overflowY: 'auto',
+            boxShadow: '0 12px 36px rgba(0,0,0,0.4)',
+            border: '2px solid #005ea2',
+            display: 'flex',
+            flexDirection: 'column',
+          }}>
+            <div style={{
+              background: '#1a4480',
+              color: '#ffffff',
+              padding: '1rem 1.4rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}>
+              <div>
+                <div style={{ fontSize: '0.72rem', color: '#a9d9e8', textTransform: 'uppercase', fontWeight: 700 }}>
+                  📐 CollabLand 3.0 Standard · Generative FMB Studio
+                </div>
+                <div style={{ fontSize: '1.2rem', fontWeight: 700, marginTop: '2px' }}>
+                  Field Measurement Book — Survey {fmbModalData.survey_number} ({fmbModalData.village})
+                </div>
+              </div>
+              <button
+                onClick={() => setFmbModalData(null)}
+                style={{
+                  background: 'rgba(255,255,255,0.15)',
+                  border: 'none',
+                  color: '#ffffff',
+                  fontSize: '1.2rem',
+                  borderRadius: '50%',
+                  width: '32px',
+                  height: '32px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ padding: '1.4rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {/* Embedded FMB SVG Field Canvas */}
+              <div style={{
+                background: '#ffffff',
+                border: '2px solid #dfe1e2',
+                borderRadius: '6px',
+                padding: '10px',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                minHeight: '260px',
+              }}>
+                <img
+                  src={`http://127.0.0.1:8000/api/fmb/${fmbModalData.ulpin}?format=svg`}
+                  alt="Generative FMB Sketch"
+                  style={{ maxWidth: '100%', maxHeight: '280px', objectFit: 'contain' }}
+                />
+              </div>
+
+              {/* FMB Survey Ledger Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', fontSize: '0.8rem' }}>
+                <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
+                  <div style={{ fontSize: '0.68rem', color: '#565c65', textTransform: 'uppercase' }}>G-Line Baseline</div>
+                  <div style={{ fontWeight: 700, color: '#005ea2' }}>{fmbModalData.baseline?.length_m?.toFixed(2)} meters</div>
+                </div>
+                <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
+                  <div style={{ fontSize: '0.68rem', color: '#565c65', textTransform: 'uppercase' }}>Computed Area</div>
+                  <div style={{ fontWeight: 700, color: '#00a91c' }}>{fmbModalData.area_cents} cents ({fmbModalData.area_sqm} m²)</div>
+                </div>
+                <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
+                  <div style={{ fontSize: '0.68rem', color: '#565c65', textTransform: 'uppercase' }}>CollabLand XML</div>
+                  <div style={{ fontWeight: 700, color: '#1a4480' }}>NIC-CollabLand-3.0</div>
+                </div>
+              </div>
+
+              {/* Download Buttons */}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <a
+                  href={`http://127.0.0.1:8000/api/fmb/${fmbModalData.ulpin}?format=svg`}
+                  target="_blank"
+                  rel="noreferrer"
+                  download={`FMB_${fmbModalData.survey_number.replace('/', '_')}.svg`}
                   style={{
                     flex: 1,
                     background: '#005ea2',
                     color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '4px',
                     padding: '10px',
-                    fontWeight: 700,
+                    textAlign: 'center',
                     fontSize: '0.82rem',
-                    cursor: 'pointer',
+                    fontWeight: 700,
+                    textDecoration: 'none',
+                    borderRadius: '4px',
                   }}
                 >
-                  📄 Download Injunction Order (PDF)
-                </button>
+                  📥 Download FMB Vector (SVG)
+                </a>
+                <a
+                  href={`http://127.0.0.1:8000/api/fmb/${fmbModalData.ulpin}?format=xml`}
+                  target="_blank"
+                  rel="noreferrer"
+                  download={`CollabLand_${fmbModalData.survey_number.replace('/', '_')}.xml`}
+                  style={{
+                    flex: 1,
+                    background: '#00a91c',
+                    color: '#ffffff',
+                    padding: '10px',
+                    textAlign: 'center',
+                    fontSize: '0.82rem',
+                    fontWeight: 700,
+                    textDecoration: 'none',
+                    borderRadius: '4px',
+                  }}
+                >
+                  📄 Export CollabLand 3.0 XML
+                </a>
               </div>
             </div>
           </div>
