@@ -1085,6 +1085,20 @@ let highlightLayer = null;
 let current = { features: [], collection: 'parcels' };
 let selectedFeature = null;
 
+// Official AOI Benchmark Boundary (Chennai Central AOI: 80.20°E - 80.28°E, 13.03°N - 13.11°N)
+const aoiBounds = [[13.03, 80.20], [13.11, 80.28]];
+const aoiRect = L.rectangle(aoiBounds, {
+  color: '#205493',
+  weight: 1.5,
+  dashArray: '4, 4',
+  fillColor: 'transparent',
+  interactive: true
+}).addTo(map);
+
+aoiRect.bindTooltip("<strong>AOI Tile: Chennai Central (22.4 km²)</strong><br><span style='font-size:0.75rem;color:#cbd5e1;'>Benchmark tile for multi-source cadastral harmonisation</span>", {
+  sticky: true
+});
+
 function num(v, d = 0) {
   return v == null ? '—' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d });
 }
