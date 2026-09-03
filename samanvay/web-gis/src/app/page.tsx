@@ -8,6 +8,8 @@ export default function WebGISPage() {
   const [selectedWard, setSelectedWard] = useState<WardLocation>(AVAILABLE_WARDS[4]); // Default Mudichur
   const [selectedStreet, setSelectedStreet] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
+  const [baseMapType, setBaseMapType] = useState<'satellite' | 'streets' | 'topo'>('satellite');
+  const [parcelOpacity, setParcelOpacity] = useState<number>(0.35);
   const [showUtilities, setShowUtilities] = useState<boolean>(true);
   
   // Google Maps Style Live Search
@@ -39,9 +41,9 @@ export default function WebGISPage() {
   const mapInstanceRef = useRef<any>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
-  // 1. Google Maps style Autocomplete Search
+  // 1. Google Maps style Dual Autocomplete Search (Cadastre + Live Global Real Geocoder)
   useEffect(() => {
-    if (!searchQuery.trim() || searchQuery.length < 1) {
+    if (!searchQuery.trim() || searchQuery.length < 2) {
       setSuggestions([]);
       setShowSuggestions(false);
       return;
@@ -49,13 +51,47 @@ export default function WebGISPage() {
 
     const timer = setTimeout(async () => {
       setIsSearching(true);
+      const combined: any[] = [];
+
       try {
-        const res = await fetch(`http://127.0.0.1:8000/api/search/streets?q=${encodeURIComponent(searchQuery)}`);
-        if (res.ok) {
-          const data = await res.json();
-          setSuggestions(data.suggestions || []);
-          setShowSuggestions(true);
+        // A. Internal Cadastral Survey & Road Index
+        const localRes = await fetch(`http://127.0.0.1:8000/api/search/streets?q=${encodeURIComponent(searchQuery)}`);
+        if (localRes.ok) {
+          const localData = await localRes.json();
+          const localHits = (localData.suggestions || []).map((s: any) => ({
+            ...s,
+            type: 'cadastre',
+            icon: '📐',
+            badge: `${s.parcels_count} Survey Plots`,
+          }));
+          combined.push(...localHits);
         }
+
+        // B. Real Live Satellite/Map Geocoding (Photon OSM Geocoder anchored on Chennai)
+        const geoRes = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(searchQuery)}&lat=12.95&lon=80.14&limit=8`);
+        if (geoRes.ok) {
+          const geoData = await geoRes.json();
+          const geoHits = (geoData.features || []).map((f: any) => {
+            const p = f.properties || {};
+            const name = p.name || p.street || p.city || searchQuery;
+            const subtitle = [p.street, p.district, p.city, p.state].filter(Boolean).join(', ');
+            return {
+              title: name,
+              locality: p.district || p.city || 'Chennai',
+              taluk: p.county || 'Tamil Nadu',
+              full_address: subtitle || name,
+              centroid: f.geometry?.coordinates || [80.14, 12.95],
+              zoom: 16.5,
+              type: 'gmap_poi',
+              icon: p.osm_value === 'railway' ? '🚉' : (p.osm_value === 'hospital' ? '🏥' : (p.osm_value === 'school' ? '🏫' : '📍')),
+              badge: p.osm_value || 'Real Landmark',
+            };
+          });
+          combined.push(...geoHits);
+        }
+
+        setSuggestions(combined);
+        setShowSuggestions(true);
       } catch (err) {
         console.error('Failed fetching street suggestions', err);
       } finally {
@@ -110,15 +146,15 @@ export default function WebGISPage() {
     }
   };
 
-  // 4. Handle Street Selection from Search (Google Maps style)
+  // 4. Handle Street/Landmark Selection from Search (Google Maps style)
   const handleSelectStreetSuggestion = (item: any) => {
     setSearchQuery(item.title);
     setShowSuggestions(false);
 
-    // Find and set matched ward
+    // Find and set matched ward if applicable
     const matchedWard = AVAILABLE_WARDS.find((w) =>
-      w.id.toLowerCase() === item.locality.toLowerCase() ||
-      w.name.toLowerCase().includes(item.locality.toLowerCase())
+      w.id.toLowerCase() === (item.locality || '').toLowerCase() ||
+      w.name.toLowerCase().includes((item.locality || '').toLowerCase())
     );
 
     if (matchedWard) {
@@ -292,7 +328,7 @@ export default function WebGISPage() {
     }
   };
 
-  // Initialize MapLibre 2D Map with Utilities, AOI Boundary, and Parcels
+  // Initialize MapLibre 2D Map with Actual Satellite & Street Layers
   useEffect(() => {
     if (viewMode === '2d' && typeof window !== 'undefined' && mapContainerRef.current) {
       const maplibre = (window as any).maplibregl;
@@ -318,7 +354,24 @@ export default function WebGISPage() {
       style: {
         version: 8,
         sources: {
-          osm: {
+          // Real Satellite Imagery Basemap (Esri High-Resolution World Imagery)
+          'satellite-tiles': {
+            type: 'raster',
+            tiles: [
+              'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            ],
+            tileSize: 256,
+          },
+          // Real Place & Street Names Overlay for Satellite (Hybrid)
+          'satellite-labels': {
+            type: 'raster',
+            tiles: [
+              'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+            ],
+            tileSize: 256,
+          },
+          // Standard OpenStreetMap Streets
+          'osm-tiles': {
             type: 'raster',
             tiles: [
               'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -353,10 +406,26 @@ export default function WebGISPage() {
           },
         },
         layers: [
+          // Base Map 1: Satellite Imagery
+          {
+            id: 'satellite-layer',
+            type: 'raster',
+            source: 'satellite-tiles',
+            layout: { visibility: baseMapType === 'satellite' ? 'visible' : 'none' },
+          },
+          // Base Map 2: OSM Streets
           {
             id: 'osm-layer',
             type: 'raster',
-            source: 'osm',
+            source: 'osm-tiles',
+            layout: { visibility: baseMapType === 'streets' ? 'visible' : 'none' },
+          },
+          // Satellite Labels Overlay
+          {
+            id: 'satellite-labels-layer',
+            type: 'raster',
+            source: 'satellite-labels',
+            layout: { visibility: baseMapType === 'satellite' ? 'visible' : 'none' },
           },
           // Official AOI Perimeter Boundary
           {
@@ -365,7 +434,7 @@ export default function WebGISPage() {
             source: 'aoi-boundary',
             paint: {
               'fill-color': '#005ea2',
-              'fill-opacity': 0.04,
+              'fill-opacity': 0.05,
             },
           },
           {
@@ -373,8 +442,8 @@ export default function WebGISPage() {
             type: 'line',
             source: 'aoi-boundary',
             paint: {
-              'line-color': '#005ea2',
-              'line-width': 2.4,
+              'line-color': '#00ffff',
+              'line-width': 2.8,
               'line-dasharray': [4, 2],
             },
           },
@@ -386,8 +455,8 @@ export default function WebGISPage() {
             layout: { 'line-join': 'round', 'line-cap': 'round' },
             paint: {
               'line-color': ['get', 'color'],
-              'line-width': 4.0,
-              'line-opacity': 0.4,
+              'line-width': 4.5,
+              'line-opacity': 0.5,
             },
           },
           {
@@ -397,11 +466,11 @@ export default function WebGISPage() {
             layout: { 'line-join': 'round', 'line-cap': 'round' },
             paint: {
               'line-color': ['get', 'color'],
-              'line-width': 2.2,
+              'line-width': 2.4,
               'line-dasharray': [2, 1],
             },
           },
-          // Cadastral Parcels Fill
+          // Cadastral Parcels Fill (Transparent over Real Satellite Imagery)
           {
             id: 'parcels-fill',
             type: 'fill',
@@ -409,23 +478,24 @@ export default function WebGISPage() {
             paint: {
               'fill-color': [
                 'case',
-                ['==', ['get', 'confidence_grade'], 'A'], '#00a91c',
-                ['==', ['get', 'confidence_grade'], 'B'], '#005ea2',
-                ['==', ['get', 'confidence_grade'], 'C'], '#e5a000',
-                ['==', ['get', 'confidence_grade'], 'D'], '#d83933',
-                '#7a1921'
+                ['==', ['get', 'confidence_grade'], 'A'], '#00e676',
+                ['==', ['get', 'confidence_grade'], 'B'], '#29b6f6',
+                ['==', ['get', 'confidence_grade'], 'C'], '#ffca28',
+                ['==', ['get', 'confidence_grade'], 'D'], '#ff5252',
+                '#d50000'
               ],
-              'fill-opacity': 0.38,
+              'fill-opacity': parcelOpacity,
             },
           },
-          // Cadastral Parcels Line
+          // Cadastral Parcels High-Contrast Boundary Line
           {
             id: 'parcels-line',
             type: 'line',
             source: 'parcels',
             paint: {
-              'line-color': '#1a4480',
+              'line-color': '#ffffff',
               'line-width': 1.6,
+              'line-opacity': 0.9,
             },
           },
         ],
@@ -460,6 +530,29 @@ export default function WebGISPage() {
       fetchWardCourtCases(selectedWard);
     });
   };
+
+  // Switch Base Map Layer (Satellite vs OSM Streets)
+  useEffect(() => {
+    if (mapInstanceRef.current && mapInstanceRef.current.isStyleLoaded()) {
+      const map = mapInstanceRef.current;
+      if (map.getLayer('satellite-layer')) {
+        map.setLayoutProperty('satellite-layer', 'visibility', baseMapType === 'satellite' ? 'visible' : 'none');
+      }
+      if (map.getLayer('satellite-labels-layer')) {
+        map.setLayoutProperty('satellite-labels-layer', 'visibility', baseMapType === 'satellite' ? 'visible' : 'none');
+      }
+      if (map.getLayer('osm-layer')) {
+        map.setLayoutProperty('osm-layer', 'visibility', baseMapType === 'streets' ? 'visible' : 'none');
+      }
+    }
+  }, [baseMapType]);
+
+  // Update Parcel Opacity
+  useEffect(() => {
+    if (mapInstanceRef.current && mapInstanceRef.current.getLayer('parcels-fill')) {
+      mapInstanceRef.current.setPaintProperty('parcels-fill', 'fill-opacity', parcelOpacity);
+    }
+  }, [parcelOpacity]);
 
   // Toggle Utilities Layer visibility
   useEffect(() => {
@@ -496,7 +589,7 @@ export default function WebGISPage() {
             🏛️ GOVERNMENT OF INDIA · SAMANVAY
           </div>
           <span style={{ fontSize: '0.75rem', background: '#00507a', padding: '2px 8px', border: '1px solid #71b4db' }}>
-            Vandalur – Guindy GST Cadastral System
+            Live Satellite & Cadastral GIS Platform
           </span>
         </div>
 
@@ -621,6 +714,26 @@ export default function WebGISPage() {
             </div>
           )}
 
+          {/* Real Satellite Opacity Control */}
+          <div style={{ padding: '0.8rem', borderBottom: '1px solid #dfe1e2', background: '#f8f9fa' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: 700, color: '#1a4480', marginBottom: '4px' }}>
+              <span>🛰️ Satellite Cadastre Opacity</span>
+              <span>{Math.round(parcelOpacity * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min="0.05"
+              max="0.9"
+              step="0.05"
+              value={parcelOpacity}
+              onChange={(e) => setParcelOpacity(parseFloat(e.target.value))}
+              style={{ width: '100%', cursor: 'pointer' }}
+            />
+            <div style={{ fontSize: '0.68rem', color: '#565c65', marginTop: '2px' }}>
+              Slide left to see high-res satellite imagery and rooftops clearly.
+            </div>
+          </div>
+
           {/* Interactive GIS Layer Toggles */}
           <div style={{ padding: '0.8rem', borderBottom: '1px solid #dfe1e2' }}>
             <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
@@ -728,11 +841,11 @@ export default function WebGISPage() {
         </aside>
 
         {/* ========================================================================= */}
-        {/* CENTER MAP AREA (MapLibre 2D / CesiumJS 3D + Floating GMaps Search) */}
+        {/* CENTER MAP AREA (Actual High-Res Satellite + Floating GMaps Search) */}
         {/* ========================================================================= */}
         <main style={{ flexGrow: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}>
           
-          {/* Google Maps Style Floating Search Box */}
+          {/* Google Maps Style Floating Search Bar with Real Live POI / Address Autocomplete */}
           <div
             ref={searchContainerRef}
             style={{
@@ -741,7 +854,7 @@ export default function WebGISPage() {
               left: '50%',
               transform: 'translateX(-50%)',
               zIndex: 30,
-              width: '440px',
+              width: '500px',
             }}
           >
             <div style={{
@@ -749,15 +862,15 @@ export default function WebGISPage() {
               alignItems: 'center',
               background: '#ffffff',
               borderRadius: '8px',
-              boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
+              boxShadow: '0 4px 18px rgba(0,0,0,0.28)',
               border: '1px solid #dfe1e2',
-              padding: '6px 12px',
-              gap: '8px',
+              padding: '8px 14px',
+              gap: '10px',
             }}>
-              <span style={{ fontSize: '1.1rem', color: '#005ea2' }}>🔍</span>
+              <span style={{ fontSize: '1.2rem', color: '#005ea2' }}>🔍</span>
               <input
                 type="text"
-                placeholder="Search streets like GMaps (e.g. Gandhi Rd, Mudichur Rd, Sivan Koil, GST)..."
+                placeholder="Search real streets, stations, colleges (e.g. Gandhi Rd, Vandalur Zoo, MCC, Mudichur Eri, Airport)..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
@@ -765,15 +878,16 @@ export default function WebGISPage() {
                   flexGrow: 1,
                   border: 'none',
                   outline: 'none',
-                  fontSize: '0.88rem',
+                  fontSize: '0.92rem',
                   color: '#1b1b1b',
-                  fontWeight: 500,
+                  fontWeight: 600,
                 }}
               />
+              {isSearching && <span style={{ fontSize: '0.8rem', color: '#005ea2' }}>⏳</span>}
               {searchQuery && (
                 <button
                   onClick={() => { setSearchQuery(''); setSuggestions([]); setShowSuggestions(false); }}
-                  style={{ background: 'none', border: 'none', color: '#565c65', cursor: 'pointer', fontSize: '1rem', padding: '0 4px' }}
+                  style={{ background: 'none', border: 'none', color: '#565c65', cursor: 'pointer', fontSize: '1.1rem', padding: '0 4px' }}
                 >
                   ✕
                 </button>
@@ -784,14 +898,14 @@ export default function WebGISPage() {
             {showSuggestions && suggestions.length > 0 && (
               <div style={{
                 position: 'absolute',
-                top: '46px',
+                top: '50px',
                 left: 0,
                 right: 0,
                 background: '#ffffff',
                 borderRadius: '8px',
-                boxShadow: '0 6px 18px rgba(0,0,0,0.22)',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
                 border: '1px solid #dfe1e2',
-                maxHeight: '320px',
+                maxHeight: '340px',
                 overflowY: 'auto',
                 zIndex: 40,
               }}>
@@ -805,19 +919,31 @@ export default function WebGISPage() {
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '10px',
+                      gap: '12px',
                       transition: 'background 0.15s',
                     }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = '#f4f6f9')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = '#ffffff')}
                   >
-                    <span style={{ fontSize: '1.2rem' }}>📍</span>
+                    <span style={{ fontSize: '1.3rem' }}>{item.icon || '📍'}</span>
                     <div style={{ flexGrow: 1 }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#1a4480' }}>
-                        {item.title}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#1a4480' }}>
+                          {item.title}
+                        </span>
+                        <span style={{
+                          fontSize: '0.68rem',
+                          fontWeight: 700,
+                          padding: '2px 6px',
+                          background: item.type === 'cadastre' ? '#e1f3f8' : '#ecf3ec',
+                          color: item.type === 'cadastre' ? '#005ea2' : '#00a91c',
+                          borderRadius: '4px',
+                        }}>
+                          {item.badge}
+                        </span>
                       </div>
-                      <div style={{ fontSize: '0.74rem', color: '#565c65' }}>
-                        {item.locality} · {item.taluk} · <span style={{ color: '#00a91c', fontWeight: 600 }}>{item.parcels_count} Land Parcels</span>
+                      <div style={{ fontSize: '0.75rem', color: '#565c65', marginTop: '2px' }}>
+                        {item.full_address || `${item.locality}, ${item.taluk}`}
                       </div>
                     </div>
                   </div>
@@ -826,46 +952,73 @@ export default function WebGISPage() {
             )}
           </div>
 
-          {/* Map View Mode Controls */}
+          {/* Base Map Switcher Buttons (Satellite vs Street Map) */}
           <div style={{
             position: 'absolute',
             top: 14,
             left: 14,
             zIndex: 20,
             background: '#ffffff',
-            borderRadius: '4px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            borderRadius: '6px',
+            boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
             border: '1px solid #dfe1e2',
             display: 'flex',
-            padding: '2px',
+            padding: '3px',
+            gap: '2px',
           }}>
             <button
-              onClick={() => setViewMode('2d')}
+              onClick={() => setBaseMapType('satellite')}
               style={{
                 padding: '6px 12px',
                 border: 'none',
-                background: viewMode === '2d' ? '#005ea2' : '#ffffff',
-                color: viewMode === '2d' ? '#ffffff' : '#1b1b1b',
-                fontWeight: 600,
+                borderRadius: '4px',
+                background: baseMapType === 'satellite' ? '#1a4480' : '#ffffff',
+                color: baseMapType === 'satellite' ? '#ffffff' : '#1b1b1b',
+                fontWeight: 700,
                 fontSize: '0.8rem',
                 cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
               }}
             >
-              MapLibre 2D
+              <span>🛰️</span> Satellite
             </button>
             <button
-              onClick={() => setViewMode('3d')}
+              onClick={() => setBaseMapType('streets')}
               style={{
                 padding: '6px 12px',
                 border: 'none',
-                background: viewMode === '3d' ? '#005ea2' : '#ffffff',
-                color: viewMode === '3d' ? '#ffffff' : '#1b1b1b',
-                fontWeight: 600,
+                borderRadius: '4px',
+                background: baseMapType === 'streets' ? '#1a4480' : '#ffffff',
+                color: baseMapType === 'streets' ? '#ffffff' : '#1b1b1b',
+                fontWeight: 700,
                 fontSize: '0.8rem',
                 cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
               }}
             >
-              CesiumJS 3D Terrain
+              <span>🗺️</span> Streets
+            </button>
+            <button
+              onClick={() => setViewMode(viewMode === '2d' ? '3d' : '2d')}
+              style={{
+                padding: '6px 12px',
+                border: 'none',
+                borderRadius: '4px',
+                background: viewMode === '3d' ? '#00a91c' : '#f4f6f9',
+                color: viewMode === '3d' ? '#ffffff' : '#1b1b1b',
+                fontWeight: 700,
+                fontSize: '0.8rem',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+            >
+              <span>🌐</span> {viewMode === '2d' ? '3D Mode' : '2D Mode'}
             </button>
           </div>
 
@@ -884,16 +1037,16 @@ export default function WebGISPage() {
               alignItems: 'center',
               color: '#ffffff',
             }}>
-              <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🌐 CesiumJS 3D Engine</div>
-              <div style={{ maxWidth: '480px', textAlign: 'center', fontSize: '0.9rem', color: '#a9d9e8', lineHeight: '1.5' }}>
-                Rendering 3D Mesh Terrain (Copernicus 30m DEM) & LOD1 CityJSON Building Extrusions for {selectedWard.name}.
+              <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🌐 CesiumJS 3D Terrain Engine</div>
+              <div style={{ maxWidth: '520px', textAlign: 'center', fontSize: '0.95rem', color: '#a9d9e8', lineHeight: '1.6' }}>
+                Rendering High-Resolution Satellite Texture draped over 3D Digital Elevation Models (DEM) & LOD1 CityJSON Building Extrusions for {selectedWard.name}.
               </div>
               <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem' }}>
-                <span style={{ padding: '6px 12px', background: '#1a4480', border: '1px solid #71b4db', fontSize: '0.8rem' }}>
-                  LOD1 CityJSON Loaded
+                <span style={{ padding: '8px 14px', background: '#1a4480', border: '1px solid #71b4db', fontSize: '0.85rem', fontWeight: 600 }}>
+                  🛰️ Satellite Imagery Draped
                 </span>
-                <span style={{ padding: '6px 12px', background: '#1a4480', border: '1px solid #71b4db', fontSize: '0.8rem' }}>
-                  Calibrated Float DSM: 0.10m GSD
+                <span style={{ padding: '8px 14px', background: '#1a4480', border: '1px solid #71b4db', fontSize: '0.85rem', fontWeight: 600 }}>
+                  🏔️ Float DSM: 0.10m GSD
                 </span>
               </div>
             </div>
