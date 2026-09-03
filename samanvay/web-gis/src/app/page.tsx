@@ -688,11 +688,12 @@ export default function WebGISPage() {
             </div>
           </div>
 
-          {/* Quick Street Filter Dropdown */}
+          {/* Dedicated Street Filter Dropdown */}
           {selectedWard.majorStreets && (
-            <div style={{ padding: '0.8rem', borderBottom: '1px solid #dfe1e2', background: '#ffffff' }}>
-              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '4px' }}>
-                🛣️ Streets in {selectedWard.id}
+            <div style={{ padding: '0.8rem 1rem', borderBottom: '1px solid #dfe1e2', background: '#ffffff' }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span>🛣️</span>
+                <span>Streets in {selectedWard.id}</span>
               </div>
               <select
                 value={selectedStreet}
@@ -702,7 +703,18 @@ export default function WebGISPage() {
                     setSearchQuery(e.target.value);
                   }
                 }}
-                style={{ width: '100%', padding: '6px', fontSize: '0.78rem', border: '1px solid #005ea2', background: '#f4f6f9', fontWeight: 600 }}
+                style={{
+                  width: '100%',
+                  padding: '7px 10px',
+                  fontSize: '0.8rem',
+                  border: '1.5px solid #005ea2',
+                  borderRadius: '4px',
+                  background: '#f8fafd',
+                  color: '#1a4480',
+                  fontWeight: 600,
+                  outline: 'none',
+                  cursor: 'pointer',
+                }}
               >
                 <option value="all">🔍 All Streets in {selectedWard.id}</option>
                 {selectedWard.majorStreets.map((st, i) => (
@@ -714,41 +726,127 @@ export default function WebGISPage() {
             </div>
           )}
 
-          {/* Real Satellite Opacity Control */}
-          <div style={{ padding: '0.8rem', borderBottom: '1px solid #dfe1e2', background: '#f8f9fa' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: 700, color: '#1a4480', marginBottom: '4px' }}>
-              <span>🛰️ Satellite Cadastre Opacity</span>
-              <span>{Math.round(parcelOpacity * 100)}%</span>
+          {/* Premium Satellite Cadastre Opacity Bar */}
+          <div style={{ padding: '0.9rem 1rem', borderBottom: '1px solid #dfe1e2', background: '#f8f9fa' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span>🛰️</span>
+                <span>Cadastre Opacity</span>
+              </span>
+              <span style={{
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                color: '#ffffff',
+                background: '#005ea2',
+                padding: '2px 8px',
+                borderRadius: '12px',
+              }}>
+                {Math.round(parcelOpacity * 100)}%
+              </span>
             </div>
-            <input
-              type="range"
-              min="0.05"
-              max="0.9"
-              step="0.05"
-              value={parcelOpacity}
-              onChange={(e) => setParcelOpacity(parseFloat(e.target.value))}
-              style={{ width: '100%', cursor: 'pointer' }}
-            />
-            <div style={{ fontSize: '0.68rem', color: '#565c65', marginTop: '2px' }}>
-              Slide left to see high-res satellite imagery and rooftops clearly.
+
+            {/* Custom Styled Slider Bar */}
+            <div style={{ position: 'relative', margin: '6px 0 10px' }}>
+              <input
+                type="range"
+                min="0.05"
+                max="0.9"
+                step="0.05"
+                value={parcelOpacity}
+                onChange={(e) => setParcelOpacity(parseFloat(e.target.value))}
+                style={{
+                  width: '100%',
+                  height: '6px',
+                  appearance: 'none',
+                  background: `linear-gradient(to right, #005ea2 ${((parcelOpacity - 0.05) / 0.85) * 100}%, #dfe1e2 ${((parcelOpacity - 0.05) / 0.85) * 100}%)`,
+                  borderRadius: '3px',
+                  outline: 'none',
+                  cursor: 'pointer',
+                }}
+              />
+            </div>
+
+            {/* Preset Buttons for Quick Inspection */}
+            <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
+              <button
+                onClick={() => setParcelOpacity(0.15)}
+                style={{
+                  flex: 1,
+                  padding: '3px 4px',
+                  fontSize: '0.68rem',
+                  border: '1px solid #dfe1e2',
+                  borderRadius: '3px',
+                  background: parcelOpacity <= 0.2 ? '#005ea2' : '#ffffff',
+                  color: parcelOpacity <= 0.2 ? '#ffffff' : '#565c65',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                15% Clear
+              </button>
+              <button
+                onClick={() => setParcelOpacity(0.35)}
+                style={{
+                  flex: 1,
+                  padding: '3px 4px',
+                  fontSize: '0.68rem',
+                  border: '1px solid #dfe1e2',
+                  borderRadius: '3px',
+                  background: parcelOpacity > 0.2 && parcelOpacity <= 0.5 ? '#005ea2' : '#ffffff',
+                  color: parcelOpacity > 0.2 && parcelOpacity <= 0.5 ? '#ffffff' : '#565c65',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                35% Balanced
+              </button>
+              <button
+                onClick={() => setParcelOpacity(0.70)}
+                style={{
+                  flex: 1,
+                  padding: '3px 4px',
+                  fontSize: '0.68rem',
+                  border: '1px solid #dfe1e2',
+                  borderRadius: '3px',
+                  background: parcelOpacity > 0.5 ? '#005ea2' : '#ffffff',
+                  color: parcelOpacity > 0.5 ? '#ffffff' : '#565c65',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                70% Solid
+              </button>
+            </div>
+            <div style={{ fontSize: '0.66rem', color: '#565c65', lineHeight: '1.3' }}>
+              Slide left to reveal real-world satellite building roofs, roads, and trees beneath the cadastre.
             </div>
           </div>
 
           {/* Interactive GIS Layer Toggles */}
-          <div style={{ padding: '0.8rem', borderBottom: '1px solid #dfe1e2' }}>
-            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-              🌐 Spatial Overlays
+          <div style={{ padding: '0.8rem 1rem', borderBottom: '1px solid #dfe1e2' }}>
+            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>🌐</span>
+              <span>Spatial Overlays</span>
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', marginBottom: '4px', cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', marginBottom: '6px', cursor: 'pointer' }}>
               <input
                 type="checkbox"
                 checked={showUtilities}
                 onChange={(e) => setShowUtilities(e.target.checked)}
+                style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#005ea2' }}
               />
-              <span>⚡ <strong>Underground Utilities Grid</strong></span>
+              <span style={{ color: '#1b1b1b', fontWeight: 600 }}>⚡ Underground Utilities Grid</span>
             </label>
-            <div style={{ fontSize: '0.68rem', color: '#565c65', marginLeft: '22px' }}>
-              🔵 CMWSSB Water · 🟠 TANGEDCO 110kV · 🟢 Drains
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginLeft: '24px' }}>
+              <span style={{ fontSize: '0.66rem', padding: '2px 6px', background: '#e1f3f8', color: '#005ea2', borderRadius: '3px', fontWeight: 600 }}>
+                🔵 CMWSSB Water (600mm)
+              </span>
+              <span style={{ fontSize: '0.66rem', padding: '2px 6px', background: '#fff1d2', color: '#8c5b00', borderRadius: '3px', fontWeight: 600 }}>
+                🟠 TANGEDCO 110kV
+              </span>
+              <span style={{ fontSize: '0.66rem', padding: '2px 6px', background: '#ecf3ec', color: '#00a91c', borderRadius: '3px', fontWeight: 600 }}>
+                🟢 RCC Drains
+              </span>
             </div>
           </div>
 
