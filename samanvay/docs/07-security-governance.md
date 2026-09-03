@@ -60,7 +60,7 @@ recorded, a PII access — appends an entry to an append-only ledger. Each entry
 Three properties follow, and each answers a specific institutional objection:
 
 **Tamper evidence.** Changing any historical entry changes its hash, which breaks the
-`prev_hash` of the next entry and every entry after it. `samanvay verify` reports the exact
+`prev_hash` of the next entry and every entry after it. `geovax verify` reports the exact
 index where a chain first breaks. An insider with write access to the database can still
 change data; they cannot change it *quietly*, which is the property that matters for a
 record that will be produced in court.

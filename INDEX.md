@@ -1,4 +1,4 @@
-# SAMANVAY — SIH 2026 · PS 26013 · delivery index
+# GEOVAX — SIH 2026 · PS 26013 · delivery index
 
 *Automated Integration and Intelligent Harmonisation of Multi-source Geospatial Data for
 Urban Land Record Management · Ministry of Rural Development / Department of Land Resources.*
@@ -12,11 +12,11 @@ are no synthetic features anywhere in the corpus, the evaluation or the demo.
 
 | # | File | What it is |
 |---|---|---|
-| 1 | **`samanvay-demo.html`** | **Double-click it.** The jury demo: a real run, inlined into one file, no server, no install. Click any parcel or building to see its sources, conflicts and six-dimension confidence. |
-| 2 | `SAMANVAY_PS26013.pdf` / `.pptx` | The 15-slide pitch deck. PDF for reading, PPTX to edit. |
+| 1 | **`geovax-demo.html`** | **Double-click it.** The jury demo: a real run, inlined into one file, no server, no install. Click any parcel or building to see its sources, conflicts and six-dimension confidence. |
+| 2 | `GEOVAX_PS26013.pdf` / `.pptx` | The 15-slide pitch deck. PDF for reading, PPTX to edit. |
 | 3 | `README.md` | The one-page argument: the result first, then the problem, then what is built. |
 | 4 | `docs/08-evaluation-results.md` | Every measured number — **and what the evaluation does not establish.** |
-| 5 | `samanvay-source.tar.gz` | The whole platform: ~12,700 lines of Python, 30 modules, 81 passing tests. |
+| 5 | `geovax-source.tar.gz` | The whole platform: ~12,700 lines of Python, 30 modules, 81 passing tests. |
 
 ---
 
@@ -50,15 +50,15 @@ A platform that reported this data as fine would be more impressive and less use
 
 ### Deliverable 1 — jury demo prototype
 
-- **`samanvay-demo.html`** — self-contained console. Real harmonised parcels and buildings
+- **`geovax-demo.html`** — self-contained console. Real harmonised parcels and buildings
   from the run, the live adjudication queue with the platform's own reasoning, per-village and
   per-ward quality, the full 12-stage run record with the ledger's Merkle root, and the change
   histogram. Opens offline in any browser; nothing is fetched.
 
 ### Deliverable 2 — pitch deck / idea submission
 
-- **`SAMANVAY_PS26013.pptx`** — 15 slides, editable.
-- **`SAMANVAY_PS26013.pdf`** — the same deck, fixed layout.
+- **`GEOVAX_PS26013.pptx`** — 15 slides, editable.
+- **`GEOVAX_PS26013.pdf`** — the same deck, fixed layout.
 
 ### Deliverable 3 — architecture and solution document
 
@@ -79,10 +79,10 @@ A platform that reported this data as fine would be more impressive and less use
 
 ### Deliverable 4 — working codebase
 
-- **`samanvay-source.tar.gz`** — the complete repository.
+- **`geovax-source.tar.gz`** — the complete repository.
 
 ```bash
-tar xzf samanvay-source.tar.gz && cd samanvay
+tar xzf geovax-source.tar.gz && cd geovax
 make setup      # dependencies + PostGIS schema
 make data       # fetch the real corpus (~2.1 GB), clip to the AOI, checksum it
 make pipeline   # run the 12-stage harmonisation DAG   (~18 min on 2 vCPU)
@@ -90,7 +90,7 @@ make lod1       # build the CityJSON 3-D city model
 make terrain    # DSM -> DTM -> nDSM -> structures on a calibrated float DSM
 make raster     # ORI rebuild, co-registration, null-change experiment
 make api        # OGC API + platform API on :8000, console at /map
-make demo       # rebuild samanvay-demo.html from the latest run
+make demo       # rebuild geovax-demo.html from the latest run
 make test       # 81 tests
 ```
 
@@ -98,15 +98,15 @@ make test       # 81 tests
 
 | Archive | Contents |
 |---|---|
-| `samanvay-results.tar.gz` | `metrics.json` (the full run record), `lod1_report.json`, `ledger.jsonl` (hash-chained provenance), `adjudication_queue.json` + `.geojson`, `changes.json`, `harmonised_parcels.geojson` |
-| `samanvay-buildings.tar.gz` | `harmonised_buildings.geojson` — 92,560 harmonised footprints |
-| `samanvay-lod1-cityjson.tar.gz` | `city_model_lod1.city.json` — CityGML LOD1 solids as CityJSON 1.1 |
-| `samanvay-raster-terrain.tar.gz` | Terrain (DSM→DTM→nDSM) and ORI / co-registration reports |
+| `geovax-results.tar.gz` | `metrics.json` (the full run record), `lod1_report.json`, `ledger.jsonl` (hash-chained provenance), `adjudication_queue.json` + `.geojson`, `changes.json`, `harmonised_parcels.geojson` |
+| `geovax-buildings.tar.gz` | `harmonised_buildings.geojson` — 92,560 harmonised footprints |
+| `geovax-lod1-cityjson.tar.gz` | `city_model_lod1.city.json` — CityGML LOD1 solids as CityJSON 1.1 |
+| `geovax-raster-terrain.tar.gz` | Terrain (DSM→DTM→nDSM) and ORI / co-registration reports |
 
 Verify the provenance ledger yourself, without trusting anything here:
 
 ```bash
-cd samanvay && samanvay verify --out <extracted results dir>
+cd geovax && geovax verify --out <extracted results dir>
 ```
 
 ---

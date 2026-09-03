@@ -1,6 +1,6 @@
 # Data sources
 
-Every dataset SAMANVAY is demonstrated on is real, openly licensed data published by an
+Every dataset GEOVAX is demonstrated on is real, openly licensed data published by an
 Indian government body or an institutional programme. **Nothing in this repository is
 synthetic.** That is a deliberate constraint, and it is the most important thing to
 understand about the evaluation: the discrepancies the platform finds are the discrepancies
@@ -217,7 +217,7 @@ in a data centre.
 | GCC wards / zones / CMA (via DataMeet) | CC-BY-4.0 |
 | OpenDroneMap UAVArena | CC-BY-4.0 |
 | Geobasis NRW DOM1 | dl-de/by-2-0 |
-| SAMANVAY source code | Apache-2.0 |
+| GEOVAX source code | Apache-2.0 |
 
 All datasets are redistributed unmodified under their upstream licences. The clipped working
 copies are derivative extracts and carry the same terms.

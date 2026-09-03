@@ -2,7 +2,7 @@ import './globals.css';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'SAMANVAY — Enterprise Web GIS & Land Records Platform',
+  title: 'GEOVAX — Enterprise Web GIS & Land Records Platform',
   description: 'National Geospatial Land Harmonisation System with RBAC/ABAC, CesiumJS 3D, and GeoAI',
 };
 

@@ -115,7 +115,7 @@ sequenceDiagram
     participant NC as NCSCM cadastre
     participant GCC as GCC survey
     participant AI as GeoAI extraction
-    participant P as SAMANVAY
+    participant P as GEOVAX
     participant L as Ledger
     participant O as Officer
 
@@ -190,7 +190,7 @@ so a state-level run is an embarrassingly parallel map over tiles with a final m
 | Weak supervision | Hand-labelled training set | No labelled cadastral correspondence set exists anywhere in India. Programmatic labelling plus self-training gets a working matcher on day one and improves with every adjudication. |
 | Dempster-Shafer | Bayesian fusion | DS separates disagreement from ignorance. That distinction is what produces the adjudication queue. |
 | Hash-chained ledger | Blockchain | There is no consensus problem: DoLR is the single writer. A hash chain with an external anchor gives the same integrity guarantee at a millionth of the cost. |
-| OGC API - Features | Custom REST | Inter-departmental exchange is the point. A department must be able to use QGIS against it with no SAMANVAY-specific code. |
+| OGC API - Features | Custom REST | Inter-departmental exchange is the point. A department must be able to use QGIS against it with no GEOVAX-specific code. |
 | MapLibre / Leaflet + vanilla JS console | Heavy SPA framework | The console must run in a district office on an old browser with a slow link. |
 
 ## 7. Failure behaviour

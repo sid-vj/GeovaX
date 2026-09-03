@@ -1,4 +1,4 @@
-# SAMANVAY — solution overview
+# GEOVAX — solution overview
 
 **Problem Statement 26013** · Automated Integration and Intelligent Harmonization of
 Multi-source Geospatial Data for Urban Land Record Management
@@ -23,9 +23,9 @@ That is not an ETL problem. ETL assumes there is a right answer in the sources a
 is to move it. Here the job is to **adjudicate** — and to do so in a way a revenue officer
 can defend in an appeal three years later.
 
-Every design decision in SAMANVAY follows from that.
+Every design decision in GEOVAX follows from that.
 
-## 2. What SAMANVAY does
+## 2. What GEOVAX does
 
 It takes the raw multi-source corpus for an area, and emits:
 
@@ -39,7 +39,7 @@ It takes the raw multi-source corpus for an area, and emits:
 * a **tamper-evident provenance ledger** in which every claim, every decision and the
   reasoning behind it is recorded and independently verifiable;
 * **OGC API - Features** endpoints so another department can consume it from QGIS with no
-  SAMANVAY-specific code.
+  GEOVAX-specific code.
 
 ## 3. The three ideas that make it work
 
@@ -69,7 +69,7 @@ contradict each other — the most valuable output the system produces.
 
 ### 3.3 The platform never invents a boundary
 
-Where sources disagree geometrically, SAMANVAY selects **one source's actually observed
+Where sources disagree geometrically, GEOVAX selects **one source's actually observed
 boundary** by evidence. It does not average them. An averaged boundary is attributable to
 no survey, can be asked of no surveyor, and is indefensible in a dispute — which makes it
 the worst possible output, however good it looks on a map.

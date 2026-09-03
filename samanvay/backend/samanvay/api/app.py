@@ -1,4 +1,4 @@
-"""The SAMANVAY API.
+"""The GEOVAX API.
 
 Two audiences, one service.
 
@@ -8,7 +8,7 @@ of the same geometry. That requires a standards-compliant, versioned, subscribab
 so the feature endpoints implement **OGC API - Features (Part 1: Core)**, which is the
 current OGC standard and what the National Geospatial Policy expects of a government
 geospatial service. A department can point QGIS, ArcGIS or a plain HTTP client at it
-without any SAMANVAY-specific code.
+without any GEOVAX-specific code.
 
 **People in this department.** The console needs things no OGC standard defines: the
 adjudication queue, confidence explanations, lineage verification, the run record. Those
@@ -45,7 +45,7 @@ from .services import cache_service, kafka_bus, opensearch_service
 from ..geoai.sam_extractor import SAMFeatureExtractor
 
 API_VERSION = "1.0.0"
-TITLE = "SAMANVAY — harmonised urban land records"
+TITLE = "GEOVAX — harmonised urban land records"
 
 
 # --------------------------------------------------------------------------------------
@@ -1015,7 +1015,7 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
                         "survey_number": p.get("properties", {}).get("survey_number"),
                         "extent_m2": p.get("properties", {}).get("computed_extent_m2"),
                         "confidence": p.get("properties", {}).get("confidence"),
-                        "source": "SAMANVAY_HARMONISED"
+                        "source": "GEOVAX_HARMONISED"
                     }
                 }
                 for p in parcels
@@ -1289,4 +1289,4 @@ def _grade_counts(feats: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(out.items()))
 
 
-app = create_app(os.environ.get("SAMANVAY_OUT", "out/chennai"))
+app = create_app(os.environ.get("GEOVAX_OUT", "out/chennai"))

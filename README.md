@@ -1,4 +1,4 @@
-# SAMANVAY
+# GEOVAX
 
 *Sanskrit: harmonisation.*
 
@@ -128,8 +128,8 @@ can be asked of no surveyor, and is indefensible in a dispute.
 ## Repository layout
 
 ```
-samanvay/
-├── backend/samanvay/        the platform — 12,700 lines of Python, 30 modules
+geovax/
+├── backend/geovax/        the platform — 12,700 lines of Python, 30 modules
 │   ├── core/                domain model, ULPIN, provenance ledger, source registry
 │   ├── crs/                 coordinate transformation + GCP rubber-sheeting
 │   ├── ingest/              format connectors, tile mosaicking, GNSS

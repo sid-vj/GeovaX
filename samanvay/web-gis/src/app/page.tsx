@@ -224,7 +224,7 @@ export default function WebGISPage() {
       if (res.ok) {
         const resData = await res.json();
         const newEvent = {
-          topic: 'samanvay.events.adjudication',
+          topic: 'geovax.events.adjudication',
           key: resData.ulpin,
           actor: currentUser.name,
           decision: resData.decision,
@@ -603,7 +603,7 @@ export default function WebGISPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <div style={{ fontWeight: 800, fontSize: '1.15rem', letterSpacing: '0.6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span>🏛️</span>
-            <span>GOVERNMENT OF INDIA · SAMANVAY</span>
+            <span>GOVERNMENT OF INDIA · GEOVAX</span>
           </div>
           <span style={{ fontSize: '0.72rem', background: '#00507a', padding: '3px 10px', borderRadius: '4px', border: '1px solid #71b4db', fontWeight: 600 }}>
             Vandalur – Guindy GST Land Records
@@ -969,7 +969,7 @@ export default function WebGISPage() {
               ⚡ Kafka Audit Stream
             </div>
             {kafkaEvents.length === 0 ? (
-              <div style={{ fontSize: '0.68rem', color: '#565c65' }}>Listening on samanvay.events.adjudication...</div>
+              <div style={{ fontSize: '0.68rem', color: '#565c65' }}>Listening on geovax.events.adjudication...</div>
             ) : (
               kafkaEvents.map((ev, i) => (
                 <div key={i} style={{ fontSize: '0.66rem', color: '#1b1b1b' }}>

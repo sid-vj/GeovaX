@@ -1,14 +1,14 @@
 # Standards, statutes and interoperability
 
 A land-records platform that does not fit the legal and technical frame it operates in is a
-prototype, not a system. This document records what SAMANVAY conforms to, what it partially
+prototype, not a system. This document records what GEOVAX conforms to, what it partially
 conforms to, and what it deliberately does not.
 
 ---
 
 ## 1. Indian statutory and programme frame
 
-| Instrument | Relevance | How SAMANVAY conforms |
+| Instrument | Relevance | How GEOVAX conforms |
 |---|---|---|
 | **DILRMP** (Digital India Land Records Modernisation Programme) | Mandates ULPIN, survey/settlement reconciliation, and mutation trails | Mints 14-character ULPINs with checksum; records subdivision/amalgamation genealogy so encumbrance history survives geometry change; reports recorded-vs-computed extent discrepancy as a first-class field |
 | **NAKSHA** (urban survey programme, DoLR) | Drone survey at 5 cm GSD, ±10 cm planimetric specification | Positional confidence is scored against a configurable specification defaulting to the NAKSHA urban tolerance; the platform reports how far existing data falls short of it, per ward |
@@ -60,7 +60,7 @@ explicitly, because a naive metre/foot assumption introduces a scale error of ab
 ## 4. Interoperability in practice
 
 A consuming department needs three things, and gets all three without writing any
-SAMANVAY-specific code:
+GEOVAX-specific code:
 
 1. **Standards-compliant features.** Point QGIS at the landing page; the collections appear.
 2. **Trust metadata on every feature.** `confidence`, `confidence_grade`, the six component
@@ -71,7 +71,7 @@ SAMANVAY-specific code:
    feature classes, a set of change types and a minimum confidence, and receive a webhook
    when something it depends on moves — rather than re-downloading the state quarterly.
 
-## 5. What SAMANVAY deliberately does not do
+## 5. What GEOVAX deliberately does not do
 
 Stating these matters as much as stating the conformances.
 

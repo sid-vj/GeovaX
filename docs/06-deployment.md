@@ -3,7 +3,7 @@
 ## 1. Quick start (evaluation)
 
 ```bash
-git clone <repo> && cd samanvay
+git clone <repo> && cd geovax
 make setup            # python deps + PostGIS schema
 make data             # fetch the real corpus (~2.1 GB) and clip to the AOI
 make pipeline         # run the harmonisation DAG
@@ -69,9 +69,9 @@ want RAM; the pipeline itself is CPU-bound and horizontally trivial.
 services:
   db:
     image: postgis/postgis:16-3.4
-    environment: [POSTGRES_DB=samanvay, POSTGRES_PASSWORD=${DB_PASSWORD}]
+    environment: [POSTGRES_DB=geovax, POSTGRES_PASSWORD=${DB_PASSWORD}]
     volumes: ["pgdata:/var/lib/postgresql/data",
-              "./backend/samanvay/db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql"]
+              "./backend/geovax/db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql"]
     healthcheck: {test: ["CMD-SHELL", "pg_isready -U postgres"], interval: 10s}
 
   redis:
@@ -79,15 +79,15 @@ services:
 
   api:
     build: ./backend
-    command: uvicorn samanvay.api.app:app --host 0.0.0.0 --port 8000
-    environment: [SAMANVAY_OUT=/data/out, DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@db/samanvay]
+    command: uvicorn geovax.api.app:app --host 0.0.0.0 --port 8000
+    environment: [GEOVAX_OUT=/data/out, DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@db/geovax]
     volumes: ["./data:/data"]
     depends_on: {db: {condition: service_healthy}}
     ports: ["8000:8000"]
 
   worker:
     build: ./backend
-    command: celery -A samanvay.pipeline.tasks worker -l info -c 4
+    command: celery -A geovax.pipeline.tasks worker -l info -c 4
     environment: [REDIS_URL=redis://redis:6379/0]
     volumes: ["./data:/data"]
     depends_on: [redis, db]
