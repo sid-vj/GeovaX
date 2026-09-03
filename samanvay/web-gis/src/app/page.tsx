@@ -8,7 +8,7 @@ export default function WebGISPage() {
   const [selectedWard, setSelectedWard] = useState<WardLocation>(AVAILABLE_WARDS[4]); // Default Mudichur
   const [selectedStreet, setSelectedStreet] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
-  const [baseMapType, setBaseMapType] = useState<'satellite' | 'streets' | 'topo'>('satellite');
+  const [baseMapType, setBaseMapType] = useState<'satellite' | 'streets'>('satellite');
   const [parcelOpacity, setParcelOpacity] = useState<number>(0.35);
   const [showUtilities, setShowUtilities] = useState<boolean>(true);
   
@@ -17,6 +17,10 @@ export default function WebGISPage() {
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+
+  // Deep Legal Case Modal State
+  const [activeCaseModal, setActiveCaseModal] = useState<any | null>(null);
+  const [noticeIssued, setNoticeIssued] = useState(false);
 
   const [adjudicationQueue, setAdjudicationQueue] = useState<any[]>([]);
   const [wardCourtCases, setWardCourtCases] = useState<any[]>([]);
@@ -36,6 +40,7 @@ export default function WebGISPage() {
   });
   const [accessAlert, setAccessAlert] = useState<string | null>(null);
   const [rightPanelTab, setRightPanelTab] = useState<'litigation' | 'ward' | 'parcel'>('litigation');
+  const [sidebarTab, setSidebarTab] = useState<'zones' | 'layers' | 'revenue'>('zones');
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
@@ -151,7 +156,6 @@ export default function WebGISPage() {
     setSearchQuery(item.title);
     setShowSuggestions(false);
 
-    // Find and set matched ward if applicable
     const matchedWard = AVAILABLE_WARDS.find((w) =>
       w.id.toLowerCase() === (item.locality || '').toLowerCase() ||
       w.name.toLowerCase().includes((item.locality || '').toLowerCase())
@@ -174,7 +178,33 @@ export default function WebGISPage() {
     setRightPanelTab('litigation');
   };
 
-  // 5. Resolve Conflict & Emit Kafka Event
+  // 5. Open Legal Case Modal & Highlight on Map
+  const handleOpenLegalCase = (courtCase: any) => {
+    setActiveCaseModal(courtCase);
+    setNoticeIssued(false);
+
+    // Find and select corresponding parcel
+    const matchedP = wardParcels.find((p) => p.ulpin === courtCase.ulpin);
+    if (matchedP) {
+      setSelectedParcel(matchedP);
+    }
+
+    // Fly to parcel location if available
+    if (mapInstanceRef.current) {
+      const feature = wardParcels.find((p) => p.ulpin === courtCase.ulpin);
+      if (feature && selectedWard.center) {
+        mapInstanceRef.current.flyTo({
+          center: selectedWard.center,
+          zoom: 16.8,
+          speed: 1.4,
+          curve: 1.2,
+          essential: true,
+        });
+      }
+    }
+  };
+
+  // 6. Resolve Conflict & Emit Kafka Event
   const handleResolveConflict = async (caseItem: any) => {
     setIsResolving(true);
     try {
@@ -210,7 +240,7 @@ export default function WebGISPage() {
     }
   };
 
-  // 6. Trigger GeoAI PyTorch SAM Extraction
+  // 7. Trigger GeoAI PyTorch SAM Extraction
   const handleTriggerGeoAI = async () => {
     setGeoaiStatus(`Running PyTorch SAM over ${selectedWard.name}...`);
     try {
@@ -228,7 +258,7 @@ export default function WebGISPage() {
     }
   };
 
-  // 7. Update Map Layer and Calculate Ward Aggregates
+  // 8. Update Map Layer and Calculate Ward Aggregates
   const updateMapData = async (ward: WardLocation, user: UserProfile) => {
     if (!mapInstanceRef.current) return;
     const map = mapInstanceRef.current;
@@ -245,7 +275,6 @@ export default function WebGISPage() {
       setAccessAlert(null);
     }
 
-    // Fly smoothly to the selected ward centroid
     map.flyTo({
       center: ward.center,
       zoom: ward.zoom,
@@ -254,7 +283,6 @@ export default function WebGISPage() {
       essential: true,
     });
 
-    // Fetch filtered GeoJSON
     try {
       const wardParam = ward.id !== 'all' ? `&ward=${encodeURIComponent(ward.id)}` : '';
       const url = `http://127.0.0.1:8000/collections/parcels/items?limit=15000&min_confidence=0${wardParam}`;
@@ -269,7 +297,6 @@ export default function WebGISPage() {
           map.getSource('parcels').setData(geojson);
         }
 
-        // Calculate and update official AOI boundary box around selected ward
         if (map.getSource('aoi-boundary')) {
           const pad = ward.id === 'all' ? 0.08 : 0.013;
           const [cx, cy] = ward.center;
@@ -354,23 +381,16 @@ export default function WebGISPage() {
       style: {
         version: 8,
         sources: {
-          // Real Satellite Imagery Basemap (Esri High-Resolution World Imagery)
           'satellite-tiles': {
             type: 'raster',
-            tiles: [
-              'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-            ],
+            tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
             tileSize: 256,
           },
-          // Real Place & Street Names Overlay for Satellite (Hybrid)
           'satellite-labels': {
             type: 'raster',
-            tiles: [
-              'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-            ],
+            tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'],
             tileSize: 256,
           },
-          // Standard OpenStreetMap Streets
           'osm-tiles': {
             type: 'raster',
             tiles: [
@@ -406,28 +426,24 @@ export default function WebGISPage() {
           },
         },
         layers: [
-          // Base Map 1: Satellite Imagery
           {
             id: 'satellite-layer',
             type: 'raster',
             source: 'satellite-tiles',
             layout: { visibility: baseMapType === 'satellite' ? 'visible' : 'none' },
           },
-          // Base Map 2: OSM Streets
           {
             id: 'osm-layer',
             type: 'raster',
             source: 'osm-tiles',
             layout: { visibility: baseMapType === 'streets' ? 'visible' : 'none' },
           },
-          // Satellite Labels Overlay
           {
             id: 'satellite-labels-layer',
             type: 'raster',
             source: 'satellite-labels',
             layout: { visibility: baseMapType === 'satellite' ? 'visible' : 'none' },
           },
-          // Official AOI Perimeter Boundary
           {
             id: 'aoi-boundary-fill',
             type: 'fill',
@@ -447,7 +463,6 @@ export default function WebGISPage() {
               'line-dasharray': [4, 2],
             },
           },
-          // Utilities Underground Lines
           {
             id: 'utilities-lines-glow',
             type: 'line',
@@ -470,7 +485,6 @@ export default function WebGISPage() {
               'line-dasharray': [2, 1],
             },
           },
-          // Cadastral Parcels Fill (Transparent over Real Satellite Imagery)
           {
             id: 'parcels-fill',
             type: 'fill',
@@ -487,7 +501,6 @@ export default function WebGISPage() {
               'fill-opacity': parcelOpacity,
             },
           },
-          // Cadastral Parcels High-Contrast Boundary Line
           {
             id: 'parcels-line',
             type: 'line',
@@ -531,7 +544,7 @@ export default function WebGISPage() {
     });
   };
 
-  // Switch Base Map Layer (Satellite vs OSM Streets)
+  // Switch Base Map Layer
   useEffect(() => {
     if (mapInstanceRef.current && mapInstanceRef.current.isStyleLoaded()) {
       const map = mapInstanceRef.current;
@@ -573,8 +586,9 @@ export default function WebGISPage() {
   }, [selectedWard, currentUser]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
-      {/* 1. Federal Top Header */}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden', fontFamily: '"Open Sans", -apple-system, BlinkMacSystemFont, sans-serif' }}>
+      
+      {/* 1. Federal Top Navigation Bar */}
       <header style={{
         background: '#1a4480',
         color: '#ffffff',
@@ -582,56 +596,35 @@ export default function WebGISPage() {
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        borderBottom: '4px solid #005ea2',
+        borderBottom: '3px solid #005ea2',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+        zIndex: 50,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <div style={{ fontWeight: 700, fontSize: '1.1rem', letterSpacing: '0.5px' }}>
-            🏛️ GOVERNMENT OF INDIA · SAMANVAY
+          <div style={{ fontWeight: 800, fontSize: '1.15rem', letterSpacing: '0.6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>🏛️</span>
+            <span>GOVERNMENT OF INDIA · SAMANVAY</span>
           </div>
-          <span style={{ fontSize: '0.75rem', background: '#00507a', padding: '2px 8px', border: '1px solid #71b4db' }}>
-            Live Satellite & Cadastral GIS Platform
+          <span style={{ fontSize: '0.72rem', background: '#00507a', padding: '3px 10px', borderRadius: '4px', border: '1px solid #71b4db', fontWeight: 600 }}>
+            Vandalur – Guindy GST Land Records
           </span>
         </div>
 
-        {/* Dual Selectors: Officer Profile (Keycloak ABAC) + Active Ward */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', fontSize: '0.85rem' }}>
-          {/* Ward Selector */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <span style={{ fontSize: '0.75rem', color: '#a9d9e8', textTransform: 'uppercase', fontWeight: 700 }}>Jurisdiction:</span>
-            <select
-              value={selectedWard.id}
-              onChange={(e) => {
-                const w = AVAILABLE_WARDS.find((item) => item.id === e.target.value);
-                if (w) {
-                  setSelectedWard(w);
-                  setSelectedStreet('all');
-                  setRightPanelTab('litigation');
-                }
-              }}
-              style={{ padding: '5px 10px', background: '#ffffff', color: '#1a4480', border: '2px solid #005ea2', fontWeight: 700, fontSize: '0.85rem' }}
-            >
-              {AVAILABLE_WARDS.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name} ({w.taluk})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Officer Profile Selector */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <span style={{ fontSize: '0.75rem', color: '#a9d9e8', textTransform: 'uppercase', fontWeight: 700 }}>Role:</span>
+        {/* Top Right Controls: Officer Role Switcher */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0f294a', padding: '4px 10px', borderRadius: '4px', border: '1px solid #2d5a8c' }}>
+            <span style={{ fontSize: '0.72rem', color: '#a9d9e8', textTransform: 'uppercase', fontWeight: 700 }}>Officer Profile:</span>
             <select
               value={currentUser.id}
               onChange={(e) => {
                 const u = PRESET_USERS.find((p) => p.id === e.target.value);
                 if (u) setCurrentUser(u);
               }}
-              style={{ padding: '5px 8px', background: '#ffffff', color: '#1b1b1b', border: '1px solid #dfe1e2', fontWeight: 600 }}
+              style={{ padding: '4px 8px', background: '#ffffff', color: '#1a4480', border: 'none', borderRadius: '3px', fontWeight: 700, fontSize: '0.8rem', outline: 'none', cursor: 'pointer' }}
             >
               {PRESET_USERS.map((u) => (
                 <option key={u.id} value={u.id}>
-                  {u.name} — {u.description}
+                  {u.name} ({u.role})
                 </option>
               ))}
             </select>
@@ -639,11 +632,11 @@ export default function WebGISPage() {
         </div>
       </header>
 
-      {/* Main Container with 3 Columns: Left Sidebar + Center Map + Right Data Panel */}
-      <div style={{ display: 'flex', flexGrow: 1, height: 'calc(100vh - 48px)', overflow: 'hidden' }}>
+      {/* Main Container with 3 Columns: Clean Left Control Sidebar + Center Map + Right Data Panel */}
+      <div style={{ display: 'flex', flexGrow: 1, height: 'calc(100vh - 52px)', overflow: 'hidden' }}>
         
         {/* ========================================================================= */}
-        {/* LEFT SIDEBAR: Navigation, OpenSearch, Adjudication, GeoAI */}
+        {/* LEFT CONTROL SIDEBAR: Tabbed, Clean & Modern */}
         {/* ========================================================================= */}
         <aside style={{
           width: '320px',
@@ -654,283 +647,332 @@ export default function WebGISPage() {
           overflowY: 'auto',
           zIndex: 10,
         }}>
-          {/* Quick Ward Navigation Grid (Vandalur, Old/New Perungalathur, Mudichur, Guindy, etc) */}
-          <div style={{ padding: '0.8rem', borderBottom: '1px solid #dfe1e2', background: '#f4f6f9' }}>
-            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#565c65', textTransform: 'uppercase', marginBottom: '6px' }}>
-              📍 Regional Zones (Vandalur ➔ Guindy)
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
-              {AVAILABLE_WARDS.filter((w) => w.id !== 'all').map((w) => (
-                <button
-                  key={w.id}
-                  onClick={() => {
-                    setSelectedWard(w);
-                    setSelectedStreet('all');
-                    setRightPanelTab('litigation');
-                  }}
-                  style={{
-                    padding: '5px 6px',
-                    fontSize: '0.70rem',
-                    textAlign: 'left',
-                    background: selectedWard.id === w.id ? '#005ea2' : '#ffffff',
-                    color: selectedWard.id === w.id ? '#ffffff' : '#1b1b1b',
-                    border: '1px solid #dfe1e2',
-                    fontWeight: selectedWard.id === w.id ? 700 : 500,
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                  title={w.name}
-                >
-                  {w.id}
-                </button>
-              ))}
-            </div>
+          {/* Sidebar Tab Bar */}
+          <div style={{ display: 'flex', borderBottom: '2px solid #005ea2', background: '#f4f6f9' }}>
+            <button
+              onClick={() => setSidebarTab('zones')}
+              style={{
+                flex: 1,
+                padding: '10px 4px',
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                border: 'none',
+                background: sidebarTab === 'zones' ? '#ffffff' : 'transparent',
+                color: sidebarTab === 'zones' ? '#005ea2' : '#565c65',
+                borderBottom: sidebarTab === 'zones' ? '3px solid #005ea2' : 'none',
+                cursor: 'pointer',
+              }}
+            >
+              📍 Zones
+            </button>
+            <button
+              onClick={() => setSidebarTab('layers')}
+              style={{
+                flex: 1,
+                padding: '10px 4px',
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                border: 'none',
+                background: sidebarTab === 'layers' ? '#ffffff' : 'transparent',
+                color: sidebarTab === 'layers' ? '#005ea2' : '#565c65',
+                borderBottom: sidebarTab === 'layers' ? '3px solid #005ea2' : 'none',
+                cursor: 'pointer',
+              }}
+            >
+              🛰️ Layers
+            </button>
+            <button
+              onClick={() => setSidebarTab('revenue')}
+              style={{
+                flex: 1,
+                padding: '10px 4px',
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                border: 'none',
+                background: sidebarTab === 'revenue' ? '#ffffff' : 'transparent',
+                color: sidebarTab === 'revenue' ? '#005ea2' : '#565c65',
+                borderBottom: sidebarTab === 'revenue' ? '3px solid #005ea2' : 'none',
+                cursor: 'pointer',
+              }}
+            >
+              ⚖️ Adjudication
+            </button>
           </div>
 
-          {/* Dedicated Street Filter Dropdown */}
-          {selectedWard.majorStreets && (
-            <div style={{ padding: '0.8rem 1rem', borderBottom: '1px solid #dfe1e2', background: '#ffffff' }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span>🛣️</span>
-                <span>Streets in {selectedWard.id}</span>
+          {/* TAB CONTENT: Zones & Streets */}
+          {sidebarTab === 'zones' && (
+            <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
+              <div>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
+                  Select Regional Jurisdiction
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
+                  {AVAILABLE_WARDS.filter((w) => w.id !== 'all').map((w) => (
+                    <button
+                      key={w.id}
+                      onClick={() => {
+                        setSelectedWard(w);
+                        setSelectedStreet('all');
+                        setRightPanelTab('litigation');
+                      }}
+                      style={{
+                        padding: '6px 8px',
+                        fontSize: '0.72rem',
+                        textAlign: 'left',
+                        background: selectedWard.id === w.id ? '#005ea2' : '#f8f9fa',
+                        color: selectedWard.id === w.id ? '#ffffff' : '#1b1b1b',
+                        border: '1px solid #dfe1e2',
+                        borderRadius: '4px',
+                        fontWeight: selectedWard.id === w.id ? 700 : 500,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                      title={w.name}
+                    >
+                      {w.id}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <select
-                value={selectedStreet}
-                onChange={(e) => {
-                  setSelectedStreet(e.target.value);
-                  if (e.target.value !== 'all') {
-                    setSearchQuery(e.target.value);
-                  }
-                }}
-                style={{
-                  width: '100%',
-                  padding: '7px 10px',
-                  fontSize: '0.8rem',
-                  border: '1.5px solid #005ea2',
-                  borderRadius: '4px',
-                  background: '#f8fafd',
-                  color: '#1a4480',
-                  fontWeight: 600,
-                  outline: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                <option value="all">🔍 All Streets in {selectedWard.id}</option>
-                {selectedWard.majorStreets.map((st, i) => (
-                  <option key={i} value={st}>
-                    📍 {st}
-                  </option>
-                ))}
-              </select>
+
+              {/* Streets in Selected Ward */}
+              {selectedWard.majorStreets && (
+                <div style={{ background: '#f8fafd', border: '1.5px solid #005ea2', borderRadius: '6px', padding: '10px' }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>🛣️</span>
+                    <span>Roads in {selectedWard.id}</span>
+                  </div>
+                  <select
+                    value={selectedStreet}
+                    onChange={(e) => {
+                      setSelectedStreet(e.target.value);
+                      if (e.target.value !== 'all') {
+                        setSearchQuery(e.target.value);
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '7px 10px',
+                      fontSize: '0.8rem',
+                      border: '1px solid #a9d9e8',
+                      borderRadius: '4px',
+                      background: '#ffffff',
+                      color: '#1a4480',
+                      fontWeight: 600,
+                      outline: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <option value="all">🔍 All Streets in {selectedWard.id}</option>
+                    {selectedWard.majorStreets.map((st, i) => (
+                      <option key={i} value={st}>
+                        📍 {st}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Premium Satellite Cadastre Opacity Bar */}
-          <div style={{ padding: '0.9rem 1rem', borderBottom: '1px solid #dfe1e2', background: '#f8f9fa' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span>🛰️</span>
-                <span>Cadastre Opacity</span>
-              </span>
-              <span style={{
-                fontSize: '0.75rem',
-                fontWeight: 700,
-                color: '#ffffff',
-                background: '#005ea2',
-                padding: '2px 8px',
-                borderRadius: '12px',
-              }}>
-                {Math.round(parcelOpacity * 100)}%
-              </span>
-            </div>
+          {/* TAB CONTENT: Map Layers, Opacity & Overlays */}
+          {sidebarTab === 'layers' && (
+            <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {/* Opacity Slider */}
+              <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '6px', padding: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    🛰️ Cadastre Opacity
+                  </span>
+                  <span style={{
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    color: '#ffffff',
+                    background: '#005ea2',
+                    padding: '2px 8px',
+                    borderRadius: '12px',
+                  }}>
+                    {Math.round(parcelOpacity * 100)}%
+                  </span>
+                </div>
 
-            {/* Custom Styled Slider Bar */}
-            <div style={{ position: 'relative', margin: '6px 0 10px' }}>
-              <input
-                type="range"
-                min="0.05"
-                max="0.9"
-                step="0.05"
-                value={parcelOpacity}
-                onChange={(e) => setParcelOpacity(parseFloat(e.target.value))}
-                style={{
-                  width: '100%',
-                  height: '6px',
-                  appearance: 'none',
-                  background: `linear-gradient(to right, #005ea2 ${((parcelOpacity - 0.05) / 0.85) * 100}%, #dfe1e2 ${((parcelOpacity - 0.05) / 0.85) * 100}%)`,
-                  borderRadius: '3px',
-                  outline: 'none',
-                  cursor: 'pointer',
-                }}
-              />
-            </div>
+                <input
+                  type="range"
+                  min="0.05"
+                  max="0.9"
+                  step="0.05"
+                  value={parcelOpacity}
+                  onChange={(e) => setParcelOpacity(parseFloat(e.target.value))}
+                  style={{ width: '100%', cursor: 'pointer', height: '6px', accentColor: '#005ea2' }}
+                />
 
-            {/* Preset Buttons for Quick Inspection */}
-            <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
-              <button
-                onClick={() => setParcelOpacity(0.15)}
-                style={{
-                  flex: 1,
-                  padding: '3px 4px',
-                  fontSize: '0.68rem',
-                  border: '1px solid #dfe1e2',
-                  borderRadius: '3px',
-                  background: parcelOpacity <= 0.2 ? '#005ea2' : '#ffffff',
-                  color: parcelOpacity <= 0.2 ? '#ffffff' : '#565c65',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                15% Clear
-              </button>
-              <button
-                onClick={() => setParcelOpacity(0.35)}
-                style={{
-                  flex: 1,
-                  padding: '3px 4px',
-                  fontSize: '0.68rem',
-                  border: '1px solid #dfe1e2',
-                  borderRadius: '3px',
-                  background: parcelOpacity > 0.2 && parcelOpacity <= 0.5 ? '#005ea2' : '#ffffff',
-                  color: parcelOpacity > 0.2 && parcelOpacity <= 0.5 ? '#ffffff' : '#565c65',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                35% Balanced
-              </button>
-              <button
-                onClick={() => setParcelOpacity(0.70)}
-                style={{
-                  flex: 1,
-                  padding: '3px 4px',
-                  fontSize: '0.68rem',
-                  border: '1px solid #dfe1e2',
-                  borderRadius: '3px',
-                  background: parcelOpacity > 0.5 ? '#005ea2' : '#ffffff',
-                  color: parcelOpacity > 0.5 ? '#ffffff' : '#565c65',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                70% Solid
-              </button>
-            </div>
-            <div style={{ fontSize: '0.66rem', color: '#565c65', lineHeight: '1.3' }}>
-              Slide left to reveal real-world satellite building roofs, roads, and trees beneath the cadastre.
-            </div>
-          </div>
-
-          {/* Interactive GIS Layer Toggles */}
-          <div style={{ padding: '0.8rem 1rem', borderBottom: '1px solid #dfe1e2' }}>
-            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span>🌐</span>
-              <span>Spatial Overlays</span>
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', marginBottom: '6px', cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={showUtilities}
-                onChange={(e) => setShowUtilities(e.target.checked)}
-                style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#005ea2' }}
-              />
-              <span style={{ color: '#1b1b1b', fontWeight: 600 }}>⚡ Underground Utilities Grid</span>
-            </label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginLeft: '24px' }}>
-              <span style={{ fontSize: '0.66rem', padding: '2px 6px', background: '#e1f3f8', color: '#005ea2', borderRadius: '3px', fontWeight: 600 }}>
-                🔵 CMWSSB Water (600mm)
-              </span>
-              <span style={{ fontSize: '0.66rem', padding: '2px 6px', background: '#fff1d2', color: '#8c5b00', borderRadius: '3px', fontWeight: 600 }}>
-                🟠 TANGEDCO 110kV
-              </span>
-              <span style={{ fontSize: '0.66rem', padding: '2px 6px', background: '#ecf3ec', color: '#00a91c', borderRadius: '3px', fontWeight: 600 }}>
-                🟢 RCC Drains
-              </span>
-            </div>
-          </div>
-
-          {/* ABAC Adjudication Queue */}
-          <div style={{ padding: '0.8rem', borderBottom: '1px solid #dfe1e2', flexGrow: 1 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase' }}>
-                ⚖️ Adjudication ({selectedWard.id})
-              </span>
-              <span style={{ fontSize: '0.7rem', color: '#565c65' }}>{adjudicationQueue.length} Cases</span>
-            </div>
-
-            {currentUser.role === 'citizen' ? (
-              <div style={{ background: '#f8dfe2', padding: '6px', fontSize: '0.75rem', color: '#9e1c23', border: '1px solid #e8a9af' }}>
-                🚫 Restricted: Citizen role cannot access Revenue Adjudication.
+                <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
+                  <button
+                    onClick={() => setParcelOpacity(0.15)}
+                    style={{
+                      flex: 1,
+                      padding: '4px',
+                      fontSize: '0.68rem',
+                      border: '1px solid #dfe1e2',
+                      borderRadius: '3px',
+                      background: parcelOpacity <= 0.2 ? '#005ea2' : '#ffffff',
+                      color: parcelOpacity <= 0.2 ? '#ffffff' : '#565c65',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    15% Clear
+                  </button>
+                  <button
+                    onClick={() => setParcelOpacity(0.35)}
+                    style={{
+                      flex: 1,
+                      padding: '4px',
+                      fontSize: '0.68rem',
+                      border: '1px solid #dfe1e2',
+                      borderRadius: '3px',
+                      background: parcelOpacity > 0.2 && parcelOpacity <= 0.5 ? '#005ea2' : '#ffffff',
+                      color: parcelOpacity > 0.2 && parcelOpacity <= 0.5 ? '#ffffff' : '#565c65',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    35% Balanced
+                  </button>
+                  <button
+                    onClick={() => setParcelOpacity(0.70)}
+                    style={{
+                      flex: 1,
+                      padding: '4px',
+                      fontSize: '0.68rem',
+                      border: '1px solid #dfe1e2',
+                      borderRadius: '3px',
+                      background: parcelOpacity > 0.5 ? '#005ea2' : '#ffffff',
+                      color: parcelOpacity > 0.5 ? '#ffffff' : '#565c65',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    70% Solid
+                  </button>
+                </div>
               </div>
-            ) : adjudicationQueue.length === 0 ? (
-              <div style={{ fontSize: '0.75rem', color: '#565c65', padding: '6px', background: '#f4f6f9' }}>
-                No open conflicts in {selectedWard.name}.
+
+              {/* Multi-Agency Utilities Toggle */}
+              <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '6px', padding: '10px' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '8px' }}>
+                  ⚡ Multi-Agency Utilities
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', marginBottom: '6px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={showUtilities}
+                    onChange={(e) => setShowUtilities(e.target.checked)}
+                    style={{ width: '16px', height: '16px', accentColor: '#005ea2', cursor: 'pointer' }}
+                  />
+                  <span style={{ fontWeight: 600, color: '#1b1b1b' }}>Underground Infrastructure Network</span>
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginLeft: '24px' }}>
+                  <span style={{ fontSize: '0.68rem', color: '#005ea2', fontWeight: 600 }}>🔵 CMWSSB Water (600mm DI Main)</span>
+                  <span style={{ fontSize: '0.68rem', color: '#8c5b00', fontWeight: 600 }}>🟠 TANGEDCO 110kV HT Power Grid</span>
+                  <span style={{ fontSize: '0.68rem', color: '#00a91c', fontWeight: 600 }}>🟢 RCC Stormwater Culverts</span>
+                </div>
               </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
-                {adjudicationQueue.slice(0, 3).map((c: any, i: number) => (
-                  <div key={i} style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', padding: '6px', fontSize: '0.75rem' }}>
-                    <div style={{ fontWeight: 700, color: '#1a4480' }}>Case: {c.case_id}</div>
-                    <div style={{ fontSize: '0.7rem', color: '#565c65' }}>{c.question || 'Boundary discrepancy'}</div>
-                    <button
-                      onClick={() => handleResolveConflict(c)}
-                      disabled={isResolving}
-                      style={{
-                        marginTop: '4px',
-                        background: '#00a91c',
-                        color: '#ffffff',
-                        border: 'none',
-                        padding: '3px 6px',
-                        fontSize: '0.7rem',
-                        fontWeight: 600,
-                        width: '100%',
-                      }}
-                    >
-                      {isResolving ? 'Emitting Kafka...' : '✓ Resolve Conflict'}
-                    </button>
+            </div>
+          )}
+
+          {/* TAB CONTENT: Revenue Adjudication & GeoAI Engine */}
+          {sidebarTab === 'revenue' && (
+            <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {/* Adjudication Queue */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase' }}>
+                    ⚖️ Conflict Queue ({selectedWard.id})
+                  </span>
+                  <span style={{ fontSize: '0.7rem', color: '#565c65' }}>{adjudicationQueue.length} Cases</span>
+                </div>
+
+                {currentUser.role === 'citizen' ? (
+                  <div style={{ background: '#f8dfe2', padding: '6px', fontSize: '0.75rem', color: '#9e1c23', border: '1px solid #e8a9af', borderRadius: '4px' }}>
+                    🚫 Citizen role has read-only access.
                   </div>
-                ))}
+                ) : adjudicationQueue.length === 0 ? (
+                  <div style={{ fontSize: '0.75rem', color: '#565c65', padding: '8px', background: '#f8f9fa', borderRadius: '4px' }}>
+                    No open conflicts in {selectedWard.name}.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '160px', overflowY: 'auto' }}>
+                    {adjudicationQueue.slice(0, 3).map((c: any, i: number) => (
+                      <div key={i} style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '6px', fontSize: '0.75rem' }}>
+                        <div style={{ fontWeight: 700, color: '#1a4480' }}>Case: {c.case_id}</div>
+                        <div style={{ fontSize: '0.7rem', color: '#565c65' }}>{c.question || 'Boundary discrepancy'}</div>
+                        <button
+                          onClick={() => handleResolveConflict(c)}
+                          disabled={isResolving}
+                          style={{
+                            marginTop: '4px',
+                            background: '#00a91c',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '3px',
+                            padding: '4px',
+                            fontSize: '0.7rem',
+                            fontWeight: 600,
+                            width: '100%',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {isResolving ? 'Emitting Kafka...' : '✓ Approve Statutory Boundary'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          {/* GeoAI PyTorch SAM Extractor */}
-          <div style={{ padding: '0.8rem', borderBottom: '1px solid #dfe1e2' }}>
-            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '4px' }}>
-              🧠 GeoAI: PyTorch SAM
+              {/* GeoAI PyTorch SAM Extractor */}
+              <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '6px', padding: '10px' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
+                  🧠 GeoAI: PyTorch SAM
+                </div>
+                <button
+                  onClick={handleTriggerGeoAI}
+                  style={{
+                    background: '#1a4480',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '6px 10px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    width: '100%',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Segment Rooftops on {selectedWard.id}
+                </button>
+                {geoaiStatus && (
+                  <div style={{ marginTop: '6px', fontSize: '0.7rem', background: '#ecf3ec', border: '1px solid #a3d9a5', padding: '6px', color: '#00507a', borderRadius: '3px' }}>
+                    {geoaiStatus}
+                  </div>
+                )}
+              </div>
             </div>
-            <button
-              onClick={handleTriggerGeoAI}
-              style={{
-                background: '#1a4480',
-                color: '#ffffff',
-                border: 'none',
-                padding: '5px 8px',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                width: '100%',
-              }}
-            >
-              Segment Buildings on {selectedWard.id}
-            </button>
-            {geoaiStatus && (
-              <div style={{ marginTop: '4px', fontSize: '0.7rem', background: '#ecf3ec', border: '1px solid #a3d9a5', padding: '4px', color: '#00507a' }}>
-                {geoaiStatus}
-              </div>
-            )}
-          </div>
+          )}
 
-          {/* Kafka Event Bus Log */}
-          <div style={{ padding: '0.6rem', background: '#f4f6f9', maxHeight: '100px', overflowY: 'auto' }}>
-            <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#565c65', textTransform: 'uppercase', marginBottom: '3px' }}>
-              ⚡ Real-Time Kafka Stream
+          {/* Real-time Kafka Stream at bottom */}
+          <div style={{ marginTop: 'auto', padding: '0.6rem 0.8rem', background: '#f4f6f9', borderTop: '1px solid #dfe1e2', maxHeight: '90px', overflowY: 'auto' }}>
+            <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#565c65', textTransform: 'uppercase', marginBottom: '2px' }}>
+              ⚡ Kafka Audit Stream
             </div>
             {kafkaEvents.length === 0 ? (
-              <div style={{ fontSize: '0.7rem', color: '#565c65' }}>Listening on topic: samanvay.events.adjudication...</div>
+              <div style={{ fontSize: '0.68rem', color: '#565c65' }}>Listening on samanvay.events.adjudication...</div>
             ) : (
               kafkaEvents.map((ev, i) => (
-                <div key={i} style={{ fontSize: '0.68rem', padding: '2px 0', borderBottom: '1px solid #e0e0e0', color: '#1b1b1b' }}>
+                <div key={i} style={{ fontSize: '0.66rem', color: '#1b1b1b' }}>
                   <strong>[{ev.time}]</strong> {ev.actor} ➔ {ev.decision}
                 </div>
               ))
@@ -943,7 +985,7 @@ export default function WebGISPage() {
         {/* ========================================================================= */}
         <main style={{ flexGrow: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}>
           
-          {/* Google Maps Style Floating Search Bar with Real Live POI / Address Autocomplete */}
+          {/* Google Maps Style Floating Search Bar */}
           <div
             ref={searchContainerRef}
             style={{
@@ -952,7 +994,7 @@ export default function WebGISPage() {
               left: '50%',
               transform: 'translateX(-50%)',
               zIndex: 30,
-              width: '500px',
+              width: '480px',
             }}
           >
             <div style={{
@@ -968,7 +1010,7 @@ export default function WebGISPage() {
               <span style={{ fontSize: '1.2rem', color: '#005ea2' }}>🔍</span>
               <input
                 type="text"
-                placeholder="Search real streets, stations, colleges (e.g. Gandhi Rd, Vandalur Zoo, MCC, Mudichur Eri, Airport)..."
+                placeholder="Search streets, stations, landmarks (e.g. Gandhi Rd, Mudichur, Airport)..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
@@ -976,7 +1018,7 @@ export default function WebGISPage() {
                   flexGrow: 1,
                   border: 'none',
                   outline: 'none',
-                  fontSize: '0.92rem',
+                  fontSize: '0.9rem',
                   color: '#1b1b1b',
                   fontWeight: 600,
                 }}
@@ -1018,7 +1060,6 @@ export default function WebGISPage() {
                       display: 'flex',
                       alignItems: 'center',
                       gap: '12px',
-                      transition: 'background 0.15s',
                     }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = '#f4f6f9')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = '#ffffff')}
@@ -1075,12 +1116,9 @@ export default function WebGISPage() {
                 fontWeight: 700,
                 fontSize: '0.8rem',
                 cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
               }}
             >
-              <span>🛰️</span> Satellite
+              🛰️ Satellite
             </button>
             <button
               onClick={() => setBaseMapType('streets')}
@@ -1093,12 +1131,9 @@ export default function WebGISPage() {
                 fontWeight: 700,
                 fontSize: '0.8rem',
                 cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
               }}
             >
-              <span>🗺️</span> Streets
+              🗺️ Streets
             </button>
             <button
               onClick={() => setViewMode(viewMode === '2d' ? '3d' : '2d')}
@@ -1111,12 +1146,9 @@ export default function WebGISPage() {
                 fontWeight: 700,
                 fontSize: '0.8rem',
                 cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
               }}
             >
-              <span>🌐</span> {viewMode === '2d' ? '3D Mode' : '2D Mode'}
+              🌐 {viewMode === '2d' ? '3D Engine' : '2D Map'}
             </button>
           </div>
 
@@ -1138,14 +1170,6 @@ export default function WebGISPage() {
               <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🌐 CesiumJS 3D Terrain Engine</div>
               <div style={{ maxWidth: '520px', textAlign: 'center', fontSize: '0.95rem', color: '#a9d9e8', lineHeight: '1.6' }}>
                 Rendering High-Resolution Satellite Texture draped over 3D Digital Elevation Models (DEM) & LOD1 CityJSON Building Extrusions for {selectedWard.name}.
-              </div>
-              <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem' }}>
-                <span style={{ padding: '8px 14px', background: '#1a4480', border: '1px solid #71b4db', fontSize: '0.85rem', fontWeight: 600 }}>
-                  🛰️ Satellite Imagery Draped
-                </span>
-                <span style={{ padding: '8px 14px', background: '#1a4480', border: '1px solid #71b4db', fontSize: '0.85rem', fontWeight: 600 }}>
-                  🏔️ Float DSM: 0.10m GSD
-                </span>
               </div>
             </div>
           )}
@@ -1231,6 +1255,7 @@ export default function WebGISPage() {
               <div style={{
                 background: '#f8dfe2',
                 border: '2px solid #d83933',
+                borderRadius: '6px',
                 padding: '10px',
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1243,12 +1268,13 @@ export default function WebGISPage() {
                     fontWeight: 700,
                     background: '#d83933',
                     color: '#ffffff',
+                    borderRadius: '4px',
                   }}>
                     {wardCourtCases.length} ACTIVE SUITS
                   </span>
                 </div>
                 <div style={{ fontSize: '0.78rem', color: '#565c65', marginTop: '4px' }}>
-                  Showing all pending title disputes, stay orders, and injunctions registered in <strong>{selectedWard.name}</strong>.
+                  Click any case card to open its <strong>Certified Court Injunction Order</strong> & legal timeline.
                 </div>
               </div>
 
@@ -1262,28 +1288,26 @@ export default function WebGISPage() {
                   wardCourtCases.map((c: any, idx: number) => (
                     <div
                       key={idx}
-                      onClick={() => {
-                        const matchedP = wardParcels.find((p) => p.ulpin === c.ulpin);
-                        if (matchedP) {
-                          setSelectedParcel(matchedP);
-                          setRightPanelTab('parcel');
-                        }
-                      }}
+                      onClick={() => handleOpenLegalCase(c)}
                       style={{
                         background: '#ffffff',
                         border: '1px solid #dfe1e2',
                         borderLeft: `5px solid ${c.status.includes('Injunction') || c.status.includes('Stay') ? '#d83933' : '#005ea2'}`,
+                        borderRadius: '4px',
                         padding: '10px',
                         fontSize: '0.78rem',
                         cursor: 'pointer',
-                        boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                        boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+                        transition: 'transform 0.1s, box-shadow 0.1s',
                       }}
+                      onMouseEnter={(e) => (e.currentTarget.style.transform = 'translateY(-2px)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.transform = 'translateY(0)')}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div style={{ fontWeight: 700, color: '#d83933', fontSize: '0.85rem' }}>
                           ⚖️ {c.case_number}
                         </div>
-                        <span style={{ fontSize: '0.68rem', color: '#1a4480', background: '#e1f3f8', padding: '2px 6px', fontWeight: 700 }}>
+                        <span style={{ fontSize: '0.68rem', color: '#1a4480', background: '#e1f3f8', padding: '2px 6px', fontWeight: 700, borderRadius: '3px' }}>
                           Survey {c.survey_number}
                         </span>
                       </div>
@@ -1304,15 +1328,21 @@ export default function WebGISPage() {
                         Parties: {c.parties}
                       </div>
 
-                      {c.status.includes('Injunction') || c.status.includes('Stay') ? (
-                        <div style={{ marginTop: '5px', padding: '4px 8px', background: '#f8dfe2', color: '#9e1c23', fontSize: '0.72rem', fontWeight: 700 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+                        <span style={{
+                          padding: '3px 6px',
+                          background: c.status.includes('Injunction') || c.status.includes('Stay') ? '#f8dfe2' : '#f4f6f9',
+                          color: c.status.includes('Injunction') || c.status.includes('Stay') ? '#9e1c23' : '#565c65',
+                          fontSize: '0.7rem',
+                          fontWeight: 700,
+                          borderRadius: '3px',
+                        }}>
                           🚨 {c.status}
-                        </div>
-                      ) : (
-                        <div style={{ marginTop: '5px', padding: '4px 8px', background: '#f4f6f9', color: '#565c65', fontSize: '0.72rem' }}>
-                          ⚖️ Status: {c.status}
-                        </div>
-                      )}
+                        </span>
+                        <span style={{ color: '#005ea2', fontSize: '0.7rem', fontWeight: 700 }}>
+                          View Case Dossier ➔
+                        </span>
+                      </div>
                     </div>
                   ))
                 )}
@@ -1323,48 +1353,24 @@ export default function WebGISPage() {
           {/* TAB 2: Comprehensive Ward Statistics & Parcel List */}
           {rightPanelTab === 'ward' && (
             <div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {/* Telemetry Metrics Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', padding: '8px' }}>
+                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
                   <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Surveyed Parcels</div>
                   <div style={{ fontSize: '1.3rem', fontWeight: 700, color: '#1a4480' }}>{wardStats.totalParcels.toLocaleString()}</div>
                 </div>
-                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', padding: '8px' }}>
+                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
                   <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Total Land Extent</div>
                   <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1a4480' }}>
                     {(wardStats.totalAreaM2 / 10000).toFixed(2)} <span style={{ fontSize: '0.75rem' }}>hectares</span>
                   </div>
                 </div>
-                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', padding: '8px' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Mean Confidence</div>
-                  <div style={{ fontSize: '1.3rem', fontWeight: 700, color: '#00a91c' }}>{wardStats.meanConfidence}</div>
-                </div>
-                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', padding: '8px' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Disputed Records</div>
-                  <div style={{ fontSize: '1.3rem', fontWeight: 700, color: '#d83933' }}>{wardCourtCases.length}</div>
-                </div>
               </div>
 
-              {/* Quality Grade Distribution Bar */}
-              <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', padding: '8px' }}>
-                <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1a4480', marginBottom: '6px' }}>
-                  Confidence Grade Distribution (A–E)
-                </div>
-                <div style={{ display: 'flex', height: '14px', borderRadius: '2px', overflow: 'hidden', marginBottom: '6px' }}>
-                  <div style={{ width: `${(wardStats.gradeCounts.A / (wardStats.totalParcels || 1)) * 100}%`, background: '#00a91c' }} title="Grade A" />
-                  <div style={{ width: `${(wardStats.gradeCounts.B / (wardStats.totalParcels || 1)) * 100}%`, background: '#2e8540' }} title="Grade B" />
-                  <div style={{ width: `${(wardStats.gradeCounts.C / (wardStats.totalParcels || 1)) * 100}%`, background: '#ffbe2e' }} title="Grade C" />
-                  <div style={{ width: `${(wardStats.gradeCounts.D / (wardStats.totalParcels || 1)) * 100}%`, background: '#d83933' }} title="Grade D" />
-                  <div style={{ width: `${(wardStats.gradeCounts.E / (wardStats.totalParcels || 1)) * 100}%`, background: '#7a1921' }} title="Grade E" />
-                </div>
-              </div>
-
-              {/* Scrollable List of All Parcels in this Ward */}
               <div>
                 <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
                   📋 Surveyed Parcels in {selectedWard.id} ({wardParcels.length})
                 </div>
-                <div style={{ maxHeight: '250px', overflowY: 'auto', border: '1px solid #dfe1e2', background: '#f4f6f9' }}>
+                <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #dfe1e2', borderRadius: '4px', background: '#f4f6f9' }}>
                   {wardParcels.map((p, idx) => (
                     <div
                       key={idx}
@@ -1390,18 +1396,16 @@ export default function WebGISPage() {
                           ULPIN: {p.ulpin}
                         </div>
                       </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <span style={{
-                          padding: '2px 6px',
-                          fontSize: '0.7rem',
-                          fontWeight: 700,
-                          background: p.confidence_grade === 'A' ? '#ecf3ec' : (p.confidence_grade === 'B' ? '#e1f3f8' : '#f8dfe2'),
-                          color: p.confidence_grade === 'A' ? '#00a91c' : (p.confidence_grade === 'B' ? '#00507a' : '#d83933'),
-                          border: '1px solid currentColor',
-                        }}>
-                          Grade {p.confidence_grade || 'D'}
-                        </span>
-                      </div>
+                      <span style={{
+                        padding: '2px 6px',
+                        fontSize: '0.7rem',
+                        fontWeight: 700,
+                        background: p.confidence_grade === 'A' ? '#ecf3ec' : '#f8dfe2',
+                        color: p.confidence_grade === 'A' ? '#00a91c' : '#d83933',
+                        borderRadius: '3px',
+                      }}>
+                        Grade {p.confidence_grade || 'D'}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -1418,7 +1422,7 @@ export default function WebGISPage() {
                 </div>
               ) : (
                 <>
-                  <div style={{ background: '#f4f6f9', border: '2px solid #005ea2', padding: '10px' }}>
+                  <div style={{ background: '#f4f6f9', border: '2px solid #005ea2', borderRadius: '4px', padding: '10px' }}>
                     <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase', fontWeight: 700 }}>
                       Bhu-Aadhaar National Identifier
                     </div>
@@ -1430,7 +1434,7 @@ export default function WebGISPage() {
                     </div>
                   </div>
 
-                  <div style={{ border: '1px solid #dfe1e2', fontSize: '0.78rem' }}>
+                  <div style={{ border: '1px solid #dfe1e2', borderRadius: '4px', fontSize: '0.78rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', borderBottom: '1px solid #dfe1e2', background: '#f8f9fa' }}>
                       <span style={{ color: '#565c65' }}>Street / Location:</span>
                       <strong>{selectedParcel.street_name || 'Main Corridor'}</strong>
@@ -1447,26 +1451,7 @@ export default function WebGISPage() {
                       <span style={{ color: '#565c65' }}>Computed Land Extent:</span>
                       <strong>{selectedParcel.computed_extent_m2} m² ({(parseFloat(selectedParcel.computed_extent_m2 || 0) * 0.0247105).toFixed(2)} cents)</strong>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', background: '#f8f9fa' }}>
-                      <span style={{ color: '#565c65' }}>Blockchain Merkle Anchor:</span>
-                      <strong style={{ color: '#00a91c' }}>✓ Gazette Anchored</strong>
-                    </div>
                   </div>
-
-                  <button
-                    onClick={() => setRightPanelTab('litigation')}
-                    style={{
-                      background: '#d83933',
-                      color: '#ffffff',
-                      padding: '8px',
-                      fontSize: '0.78rem',
-                      fontWeight: 700,
-                      border: 'none',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    ⚖️ View All Court Cases in {selectedWard.id} ({wardCourtCases.length})
-                  </button>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     <a
@@ -1481,7 +1466,7 @@ export default function WebGISPage() {
                         fontSize: '0.78rem',
                         fontWeight: 700,
                         textDecoration: 'none',
-                        border: 'none',
+                        borderRadius: '4px',
                       }}
                     >
                       📐 View Generative FMB Field Sketch (SVG)
@@ -1493,6 +1478,179 @@ export default function WebGISPage() {
           )}
         </section>
       </div>
+
+      {/* ========================================================================= */}
+      {/* DEEP INTERACTIVE JUDICIAL CASE MODAL (Shows when case is touched) */}
+      {/* ========================================================================= */}
+      {activeCaseModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 15, 35, 0.75)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 100,
+          padding: '20px',
+        }}>
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '8px',
+            width: '640px',
+            maxWidth: '95vw',
+            maxHeight: '90vh',
+            overflowY: 'auto',
+            boxShadow: '0 12px 36px rgba(0,0,0,0.35)',
+            border: '2px solid #005ea2',
+            display: 'flex',
+            flexDirection: 'column',
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              background: '#1a4480',
+              color: '#ffffff',
+              padding: '1rem 1.4rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}>
+              <div>
+                <div style={{ fontSize: '0.72rem', color: '#a9d9e8', textTransform: 'uppercase', fontWeight: 700 }}>
+                  ⚖️ e-Courts National Judicial Data Grid · Case Details
+                </div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 700, marginTop: '2px' }}>
+                  {activeCaseModal.case_number}
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveCaseModal(null)}
+                style={{
+                  background: 'rgba(255,255,255,0.15)',
+                  border: 'none',
+                  color: '#ffffff',
+                  fontSize: '1.2rem',
+                  borderRadius: '50%',
+                  width: '32px',
+                  height: '32px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '1.4rem', display: 'flex', flexDirection: 'column', gap: '1rem', fontSize: '0.85rem' }}>
+              
+              {/* Injunction Status Banner */}
+              <div style={{
+                background: '#f8dfe2',
+                border: '1.5px solid #d83933',
+                borderRadius: '6px',
+                padding: '12px',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <strong style={{ color: '#9e1c23', fontSize: '0.95rem' }}>🚨 {activeCaseModal.status}</strong>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, background: '#d83933', color: '#ffffff', padding: '2px 8px', borderRadius: '4px' }}>
+                    {activeCaseModal.risk_tier} RISK
+                  </span>
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#565c65', marginTop: '6px', lineHeight: '1.4' }}>
+                  {activeCaseModal.interim_decree}
+                </div>
+              </div>
+
+              {/* Judicial Metadata Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>CNR Number</div>
+                  <div style={{ fontWeight: 700, color: '#1a4480', fontSize: '0.95rem' }}>{activeCaseModal.cnr}</div>
+                </div>
+                <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Court / Bench</div>
+                  <div style={{ fontWeight: 700, color: '#1b1b1b', fontSize: '0.9rem' }}>{activeCaseModal.court_name}</div>
+                </div>
+                <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Disputed Survey Land</div>
+                  <div style={{ fontWeight: 700, color: '#005ea2', fontSize: '0.95rem' }}>
+                    Survey {activeCaseModal.survey_number} · {activeCaseModal.street_name}
+                  </div>
+                </div>
+                <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Next Hearing Date</div>
+                  <div style={{ fontWeight: 700, color: '#d83933', fontSize: '0.95rem' }}>{activeCaseModal.next_hearing_date}</div>
+                </div>
+              </div>
+
+              {/* Parties Section */}
+              <div style={{ border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px', background: '#ffffff' }}>
+                <div style={{ fontSize: '0.72rem', color: '#565c65', textTransform: 'uppercase', fontWeight: 700, marginBottom: '4px' }}>
+                  Litigant Parties
+                </div>
+                <div style={{ fontSize: '0.85rem', color: '#1b1b1b', lineHeight: '1.4' }}>
+                  <strong>Petitioner:</strong> {activeCaseModal.petitioner}<br />
+                  <strong>Respondent:</strong> {activeCaseModal.respondent}
+                </div>
+              </div>
+
+              {/* Encumbrance & Lis Pendens Flags */}
+              <div style={{ border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px', background: '#fffcf2' }}>
+                <div style={{ fontSize: '0.72rem', color: '#8c5b00', textTransform: 'uppercase', fontWeight: 700, marginBottom: '4px' }}>
+                  📜 Encumbrance Certificate (EC) Lis Pendens Entries
+                </div>
+                <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '0.8rem', color: '#565c65' }}>
+                  {activeCaseModal.ec_flags.map((flag: string, i: number) => (
+                    <li key={i}>{flag}</li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Statutory Actions */}
+              <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                <button
+                  onClick={() => setNoticeIssued(true)}
+                  style={{
+                    flex: 1,
+                    background: noticeIssued ? '#00a91c' : '#d83933',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '10px',
+                    fontWeight: 700,
+                    fontSize: '0.82rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {noticeIssued ? '✓ Section 7 Notice Issued to Tahsildar' : '🛡️ Issue Statutory Section 7 Notice'}
+                </button>
+                <button
+                  onClick={() => alert(`Downloading Certified Interim Injunction Order for ${activeCaseModal.case_number} (PDF)...`)}
+                  style={{
+                    flex: 1,
+                    background: '#005ea2',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '10px',
+                    fontWeight: 700,
+                    fontSize: '0.82rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  📄 Download Injunction Order (PDF)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
