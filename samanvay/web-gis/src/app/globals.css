@@ -1,0 +1,46 @@
+@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap');
+
+:root {
+  --bg-primary: #f4f6f9;
+  --surface: #ffffff;
+  --surface-subtle: #f0f2f5;
+  --border: #dfe1e2;
+  --border-dark: #a9aeb1;
+  --text-main: #1b1b1b;
+  --text-muted: #565c65;
+  --primary: #005ea2;
+  --primary-dark: #1a4480;
+  --danger: #d83933;
+  --danger-bg: #f8dfe2;
+  --warning: #ffbe2e;
+  --warning-bg: #fff1d2;
+  --success: #00a91c;
+  --success-bg: #ecf3ec;
+  --tech-badge: #e1f3f8;
+  --tech-text: #00507a;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Open Sans', sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  height: 100vh;
+  overflow: hidden;
+}
+
+button {
+  font-family: 'Open Sans', sans-serif;
+  cursor: pointer;
+  border-radius: 0px;
+}
+
+input, select {
+  font-family: 'Open Sans', sans-serif;
+  border-radius: 0px;
+}

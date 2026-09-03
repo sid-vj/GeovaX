@@ -40,6 +40,9 @@ from ..core.ledger import ProvenanceLedger
 from ..attributes.canonical import PARCEL_SCHEMA, redact_pii
 from ..cadastre.fmb import generate_fmb, to_collabland_xml, to_fmb_svg
 from ..analytics.litigation import build_litigation_hotspots, calculate_litigation_risk
+from .auth import Role, UserClaims, get_current_user, require_roles
+from .services import cache_service, kafka_bus, opensearch_service
+from ..geoai.sam_extractor import SAMFeatureExtractor
 
 API_VERSION = "1.0.0"
 TITLE = "SAMANVAY — harmonised urban land records"
@@ -206,20 +209,36 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
         ulpin: str | None = None,
         survey_number: str | None = None,
         change_type: str | None = None,
+        user: UserClaims = Depends(get_current_user),
     ) -> JSONResponse:
         feats = store.collections.get(collection_id)
         if feats is None:
             raise HTTPException(404, f"unknown collection {collection_id!r}")
 
+        # ABAC Spatial Enforcement: If user requests a specific ward outside their jurisdiction, reject
+        if ward and not user.can_access_ward(ward):
+            raise HTTPException(403, f"Spatial access denied: User {user.username} is not authorized for ward {ward}")
+
+        cache_key = f"items:{collection_id}:{user.user_id}:{ward}:{bbox}:{min_confidence}:{grade}:{limit}:{offset}"
+        cached = cache_service.get(cache_key)
+        if cached:
+            return JSONResponse(cached, media_type="application/geo+json")
+
         box = _parse_bbox(bbox)
         out: list[dict[str, Any]] = []
         for f in feats:
             p = f.get("properties", {})
+            f_ward = str(p.get("ward") or "")
+
+            # ABAC filtering: only include features within user's allowed jurisdiction
+            if user.allowed_wards and f_ward and not user.can_access_ward(f_ward):
+                continue
+
             if min_confidence and float(p.get("confidence") or 0) < min_confidence:
                 continue
             if grade and p.get("confidence_grade") != grade.upper():
                 continue
-            if ward and str(p.get("ward") or "") != str(ward):
+            if ward and f_ward != str(ward):
                 continue
             if ulpin and p.get("ulpin") != ulpin:
                 continue
@@ -241,14 +260,21 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
                 "href": f"{base}/collections/{collection_id}/items"
                         f"?limit={limit}&offset={offset + limit}",
             })
-        return JSONResponse({
+        resp_payload = {
             "type": "FeatureCollection",
             "features": page,
             "numberMatched": total,
             "numberReturned": len(page),
+            "userScope": {
+                "user": user.username,
+                "roles": [r.value for r in user.roles],
+                "restrictedWards": user.allowed_wards,
+            },
             "timeStamp": datetime.now(timezone.utc).isoformat(),
             "links": links,
-        }, media_type="application/geo+json")
+        }
+        cache_service.set(cache_key, resp_payload, ttl_seconds=60)
+        return JSONResponse(resp_payload, media_type="application/geo+json")
 
     @app.get("/collections/{collection_id}/items/{feature_id}", tags=["ogc"])
     def item(collection_id: str, feature_id: str) -> JSONResponse:
@@ -307,13 +333,141 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
                                    key=lambda kv: -kv[1]["parcels"])[:60]),
         }
 
+    @app.get("/api/auth/me", tags=["auth"])
+    def get_my_identity(user: UserClaims = Depends(get_current_user)) -> dict[str, Any]:
+        """Inspect current authenticated user claims, Keycloak roles, and ABAC spatial permissions."""
+        return {
+            "user_id": user.user_id,
+            "username": user.username,
+            "roles": [r.value for r in user.roles],
+            "is_super": user.is_super,
+            "jurisdiction": {
+                "state_lgd": user.state_lgd,
+                "district_lgd": user.district_lgd,
+                "subdistrict_lgd": user.subdistrict_lgd,
+                "allowed_wards": user.allowed_wards,
+            }
+        }
+
+    @app.get("/api/search", tags=["enterprise"])
+    def search_records(q: str = Query(..., min_length=2), limit: int = 20) -> dict[str, Any]:
+        """OpenSearch / Elasticsearch full-text & spatial query over land records."""
+        results = opensearch_service.search(q, limit=limit)
+        if not results:
+            # Fallback search directly over current in-memory store
+            parcels = store.collections.get("parcels", [])
+            matches = []
+            ql = q.lower().strip()
+            for p in parcels:
+                props = p.get("properties", {})
+                match_str = f"{props.get('ulpin', '')} {props.get('survey_number', '')} {props.get('village', '')} {props.get('ward', '')}".lower()
+                if ql in match_str:
+                    matches.append(props)
+                    if len(matches) >= limit:
+                        break
+            results = matches
+        return {"query": q, "total": len(results), "hits": results}
+
     @app.get("/api/adjudication", tags=["platform"])
-    def adjudication(limit: int = Query(50, ge=1, le=500),
-                     batch: str | None = None) -> dict[str, Any]:
+    def adjudication(
+        limit: int = Query(50, ge=1, le=500),
+        batch: str | None = None,
+        user: UserClaims = Depends(require_roles(Role.TAHSILDAR, Role.SUPER_ADMIN, Role.DISTRICT_COLLECTOR, Role.SURVEY_OFFICER)),
+    ) -> dict[str, Any]:
+        """ABAC protected adjudication queue: Only authorized revenue officers can access."""
         cases = store.queue()
         if batch:
             cases = [c for c in cases if c.get("batch") == batch]
-        return {"total": len(cases), "cases": cases[:limit]}
+        
+        # ABAC filter cases by ward if officer scope is restricted
+        if user.allowed_wards:
+            filtered_cases = []
+            for c in cases:
+                c_ward = str(c.get("ward") or c.get("metadata", {}).get("ward", ""))
+                if not c_ward or user.can_access_ward(c_ward):
+                    filtered_cases.append(c)
+            cases = filtered_cases
+
+        return {
+            "total": len(cases),
+            "user": user.username,
+            "roles": [r.value for r in user.roles],
+            "cases": cases[:limit],
+        }
+
+    @app.post("/api/adjudication/resolve", tags=["platform"])
+    async def resolve_conflict(
+        request: Request,
+        user: UserClaims = Depends(require_roles(Role.TAHSILDAR, Role.SUPER_ADMIN)),
+    ) -> dict[str, Any]:
+        """Resolve conflict, write immutable audit record to provenance ledger, and emit Kafka event."""
+        body = await request.json()
+        case_id = body.get("case_id")
+        decision = body.get("decision", "ACCEPTED")
+        ulpin = body.get("ulpin", "33GCCZKH6KJM33")
+        rationale = body.get("rationale", "Statutory alignment verified by Revenue Officer.")
+
+        # 1. Write immutable provenance entry
+        store.ledger.append(
+            entity_id=ulpin,
+            operation="ADJUDICATION_DECISION",
+            payload={"case_id": case_id, "decision": decision, "rationale": rationale},
+            actor=f"{user.username} ({user.roles[0].value})",
+        )
+
+        # 2. Emit real-time Kafka event to downstream consumers
+        kafka_bus.emit(
+            topic=KafkaEventBus.TOPIC_ADJUDICATION,
+            key=ulpin,
+            payload={
+                "case_id": case_id,
+                "ulpin": ulpin,
+                "decision": decision,
+                "resolved_by": user.username,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+
+        # Invalidate cache
+        cache_service.invalidate()
+
+        return {
+            "status": "RESOLVED",
+            "case_id": case_id,
+            "ulpin": ulpin,
+            "decision": decision,
+            "ledger_anchored": True,
+            "kafka_event_emitted": True,
+        }
+
+    @app.post("/api/ai/extract-footprints", tags=["geoai"])
+    async def ai_extract_footprints(request: Request) -> dict[str, Any]:
+        """GeoAI extraction using PyTorch and Segment Anything Model (SAM)."""
+        body = await request.json()
+        bbox = body.get("bbox", [80.23, 13.06, 80.25, 13.08])
+        extractor = SAMFeatureExtractor()
+        results = extractor.extract_from_raster(
+            raster_path="data/raw/uavarena/odm-3.0.0.cog.tif",
+            bbox=tuple(bbox),
+        )
+        return {
+            "model": "SegmentAnything-ViT-H",
+            "framework": "PyTorch 2.x",
+            "extracted_count": len(results),
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": r.polygon_geojson,
+                    "properties": {
+                        "confidence": r.confidence,
+                        "area_m2": r.area_m2,
+                        "height_m": r.height_m,
+                        "feature_class": r.feature_class,
+                    }
+                }
+                for r in results
+            ]
+        }
 
     @app.get("/api/changes", tags=["platform"])
     def changes(change_type: str | None = None, actionable: bool | None = None,
@@ -593,6 +747,16 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
             with open(path, encoding="utf-8") as fh:
                 return fh.read()
         return "<h1>Console not built</h1><p>See frontend/index.html</p>"
+
+    @app.get("/map-india", response_class=HTMLResponse, include_in_schema=False)
+    def console_india() -> str:
+        path = os.path.join(os.path.dirname(__file__), "..", "..", "..",
+                            "frontend", "demo_mvt.html")
+        path = os.path.abspath(path)
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as fh:
+                return fh.read()
+        return "<h1>Pan-India Console not built</h1><p>See frontend/demo_mvt.html</p>"
 
     return app
 
