@@ -1,2 +1,11 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# GitHub Linguist Overrides
+# Mark compiled/inlined single-file HTML demos and data as vendored/generated so Python & TypeScript reflect accurately
+*.html linguist-vendored=true
+samanvay-demo.html linguist-vendored=true
+samanvay/demo/* linguist-vendored=true
+samanvay/frontend/* linguist-vendored=true
+samanvay/out/* linguist-vendored=true
+docs/* linguist-documentation=true
