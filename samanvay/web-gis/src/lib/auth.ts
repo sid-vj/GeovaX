@@ -20,7 +20,14 @@ export interface WardLocation {
 }
 
 export const AVAILABLE_WARDS: WardLocation[] = [
-  { id: "all", name: "All Wards & Zones (Chennai & Tambaram)", taluk: "Entire Metropolitan Extent", center: [80.200, 13.010], zoom: 11.8, parcelCountApprox: 15200 },
+  { id: "all", name: "All Wards & Zones (Chennai, Tambaram & Perungalathur)", taluk: "Entire Metropolitan Extent", center: [80.180, 12.980], zoom: 11.5, parcelCountApprox: 15800 },
+  // South Chennai & Tambaram Corporation (Contiguous Cadastre)
+  { id: "Perungalathur", name: "Zone 7 · Perungalathur (Kamaraj High Rd / GST)", taluk: "Tambaram Taluk", center: [80.094, 12.905], zoom: 15.2, parcelCountApprox: 1650 },
+  { id: "Mudichur", name: "Zone 6 · Mudichur (Sriperumbudur Main Rd)", taluk: "Tambaram Taluk", center: [80.078, 12.912], zoom: 15.2, parcelCountApprox: 1450 },
+  { id: "Tambaram", name: "Zone 1 · Tambaram Central (West & East GST)", taluk: "Tambaram Taluk", center: [80.118, 12.924], zoom: 15.0, parcelCountApprox: 2600 },
+  { id: "Chromepet", name: "Zone 2 · Chromepet (MIT & Radha Nagar)", taluk: "Pallavaram Taluk", center: [80.142, 12.952], zoom: 15.0, parcelCountApprox: 2400 },
+  { id: "Pallavaram", name: "Zone 3 · Pallavaram (Cantonment Axis)", taluk: "Pallavaram Taluk", center: [80.155, 12.968], zoom: 15.0, parcelCountApprox: 1950 },
+  { id: "Hasthinapuram", name: "Zone 4 · Hasthinapuram", taluk: "Tambaram Taluk", center: [80.148, 12.946], zoom: 15.2, parcelCountApprox: 1420 },
   // Central & North Chennai
   { id: "Egmore", name: "Ward 104 · Egmore", taluk: "Egmore - Nungambakkam", center: [80.260, 13.080], zoom: 15.0, parcelCountApprox: 1840 },
   { id: "Chetpet", name: "Ward 105 · Chetpet", taluk: "Egmore - Nungambakkam", center: [80.238, 13.072], zoom: 15.2, parcelCountApprox: 2120 },
@@ -30,13 +37,6 @@ export const AVAILABLE_WARDS: WardLocation[] = [
   { id: "Periyamet", name: "Ward 58 · Periyamet", taluk: "Fort - Tondiarpet", center: [80.271, 13.084], zoom: 15.2, parcelCountApprox: 1410 },
   { id: "Puliyanthopu", name: "Ward 72 · Puliyanthopu", taluk: "Perambur - Purasawakkam", center: [80.265, 13.098], zoom: 15.0, parcelCountApprox: 1620 },
   { id: "Vepary", name: "Ward 57 · Vepery", taluk: "Perambur - Purasawakkam", center: [80.262, 13.088], zoom: 15.0, parcelCountApprox: 1180 },
-  // South Chennai & Tambaram Corporation
-  { id: "Tambaram", name: "Zone 1 · Tambaram Central", taluk: "Tambaram Taluk", center: [80.117, 12.925], zoom: 14.8, parcelCountApprox: 2600 },
-  { id: "Chromepet", name: "Zone 2 · Chromepet (GST Corridor)", taluk: "Pallavaram Taluk", center: [80.142, 12.952], zoom: 14.8, parcelCountApprox: 2400 },
-  { id: "Pallavaram", name: "Zone 3 · Pallavaram", taluk: "Pallavaram Taluk", center: [80.155, 12.968], zoom: 14.8, parcelCountApprox: 1950 },
-  { id: "Hasthinapuram", name: "Zone 4 · Hasthinapuram", taluk: "Tambaram Taluk", center: [80.148, 12.946], zoom: 15.0, parcelCountApprox: 1420 },
-  { id: "Radha Nagar", name: "Zone 5 · Radha Nagar", taluk: "Pallavaram Taluk", center: [80.138, 12.948], zoom: 15.2, parcelCountApprox: 1180 },
-  { id: "Mudichur", name: "Zone 6 · Mudichur", taluk: "Tambaram Taluk", center: [80.089, 12.915], zoom: 14.8, parcelCountApprox: 1350 },
 ];
 
 export const PRESET_USERS: UserProfile[] = [
@@ -49,12 +49,12 @@ export const PRESET_USERS: UserProfile[] = [
   },
   {
     id: "usr-tambaram",
-    name: "Tahsildar (Tambaram & Chromepet)",
+    name: "Tahsildar (Tambaram & Perungalathur)",
     role: "tahsildar",
     token: "token-tahsildar-tambaram",
-    wardScope: ["Tambaram", "Chromepet", "Pallavaram", "Hasthinapuram", "Radha Nagar", "Mudichur"],
+    wardScope: ["Perungalathur", "Mudichur", "Tambaram", "Chromepet", "Pallavaram", "Hasthinapuram"],
     districtScope: "572",
-    description: "Jurisdiction: Tambaram, Chromepet, Pallavaram",
+    description: "Jurisdiction: Perungalathur, Mudichur, Tambaram",
   },
   {
     id: "usr-egmore",

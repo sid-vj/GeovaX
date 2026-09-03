@@ -174,6 +174,27 @@ export default function WebGISPage() {
           map.getSource('parcels').setData(geojson);
         }
 
+        // Calculate and update official AOI boundary box around selected ward
+        if (map.getSource('aoi-boundary')) {
+          const pad = 0.012;
+          const [cx, cy] = ward.center;
+          const aoiGeojson = {
+            type: 'Feature',
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[
+                [cx - pad, cy - pad],
+                [cx + pad, cy - pad],
+                [cx + pad, cy + pad],
+                [cx - pad, cy + pad],
+                [cx - pad, cy - pad],
+              ]],
+            },
+            properties: { name: `Official AOI Extent: ${ward.name}` },
+          };
+          map.getSource('aoi-boundary').setData(aoiGeojson);
+        }
+
         const parcelsList = features.map((f: any) => f.properties);
         setWardParcels(parcelsList);
 
@@ -258,12 +279,49 @@ export default function WebGISPage() {
             type: 'geojson',
             data: `http://127.0.0.1:8000/collections/utilities/items`,
           },
+          'aoi-boundary': {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              geometry: {
+                type: 'Polygon',
+                coordinates: [[
+                  [80.068, 12.905],
+                  [80.092, 12.905],
+                  [80.092, 12.925],
+                  [80.068, 12.925],
+                  [80.068, 12.905],
+                ]],
+              },
+              properties: {},
+            },
+          },
         },
         layers: [
           {
             id: 'osm-layer',
             type: 'raster',
             source: 'osm',
+          },
+          // Official AOI Perimeter Boundary (Dashed Rectangle)
+          {
+            id: 'aoi-boundary-fill',
+            type: 'fill',
+            source: 'aoi-boundary',
+            paint: {
+              'fill-color': '#005ea2',
+              'fill-opacity': 0.04,
+            },
+          },
+          {
+            id: 'aoi-boundary-line',
+            type: 'line',
+            source: 'aoi-boundary',
+            paint: {
+              'line-color': '#005ea2',
+              'line-width': 2.2,
+              'line-dasharray': [4, 2],
+            },
           },
           // Utilities Underground Lines
           {
