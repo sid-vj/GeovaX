@@ -4,19 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SAMANVAY Harmonisation Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
 <style>
   :root{
-    --ink:#0d1622; --ink2:#13202f; --panel:#182739; --line:#22364d;
-    --text:#e8eef6; --muted:#8fa4bd; --land:#12a07f; --clay:#d9743b;
-    --a:#19b37a; --b:#6fbf73; --c:#d9a441; --d:#d9743b; --e:#c0392b;
-    --accent:#4f9cf9; --purple:#a371f7; --gold:#ffd27f;
+    --ink:#0b1118; --ink2:#111926; --panel:#172233; --line:#24354b;
+    --text:#f3f6fa; --muted:#94a3b8; --land:#10b981; --clay:#d9743b;
+    --a:#2e7d32; --b:#3d705d; --c:#8a6d3b; --d:#8c4a32; --e:#732929;
+    --accent:#0071bc; --purple:#a855f7; --gold:#b7791f;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--ink);color:var(--text);
-       font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       font:14px/1.5 'Open Sans',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
        -webkit-font-smoothing:antialiased}
   h1,h2,h3,h4{margin:0;font-weight:600;letter-spacing:-.01em}
-  a{color:var(--land)}
+  a{color:var(--gold)}
   .wrap{max-width:1540px;margin:0 auto;padding:16px}
 
   header{display:flex;flex-wrap:wrap;align-items:center;gap:14px;
@@ -96,9 +99,9 @@
   .why{margin-top:7px;font-size:11.5px;color:var(--clay)}
   .meta{font-size:11px;color:var(--muted);margin-top:6px}
 
-  /* Co-Pilot Styles */
-  .copilot-box{background:linear-gradient(145deg, rgba(24,39,57,.9), rgba(13,22,34,.95));
-               border:1px solid #2b4566;border-radius:10px;padding:12px;margin:10px 0}
+  /* Co-Pilot Styles (Flat 2D) */
+  .copilot-box{background:#111926;
+               border:1px solid #2b4566;border-radius:4px;padding:12px;margin:10px 0}
   .copilot-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
   .copilot-head h4{font-size:13px;color:var(--accent);display:flex;align-items:center;gap:6px}
   .copilot-stream{font-size:12.5px;line-height:1.6;color:#d8e5f5;background:#09111b;
