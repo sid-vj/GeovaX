@@ -5,22 +5,21 @@ import { PRESET_USERS, AVAILABLE_WARDS, UserProfile, WardLocation } from '../lib
 
 export default function WebGISPage() {
   const [currentUser, setCurrentUser] = useState<UserProfile>(PRESET_USERS[1]); // Tahsildar (Vandalur – Guindy Corridor)
-  const [selectedWard, setSelectedWard] = useState<WardLocation>(AVAILABLE_WARDS[4]); // Default Mudichur
+  const [selectedWard, setSelectedWard] = useState<WardLocation>(AVAILABLE_WARDS[5]); // Default Veeralakshmi Nagar / Mudichur
   const [selectedStreet, setSelectedStreet] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [baseMapType, setBaseMapType] = useState<'osiris-sat' | 'osiris-dark' | 'osiris-streets'>('osiris-sat');
   const [parcelOpacity, setParcelOpacity] = useState<number>(0.35);
   const [showUtilities, setShowUtilities] = useState<boolean>(true);
-  const [osirisAiScanning, setOsirisAiScanning] = useState<boolean>(true);
   
-  // OSIRIS Google Maps Style Live Search
+  // OSIRIS Live Search
   const [searchQuery, setSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
 
   // HUD and Hover State
-  const [cursorCoords, setCursorCoords] = useState<{ lng: string; lat: string }>({ lng: '80.0862', lat: '12.9248' });
+  const [cursorCoords, setCursorCoords] = useState<{ lng: string; lat: string }>({ lng: '80.0712', lat: '12.9124' });
   const [hoveredParcel, setHoveredParcel] = useState<any | null>(null);
   const [hoverPosition, setHoverPosition] = useState<{ x: number; y: number } | null>(null);
 
@@ -71,7 +70,7 @@ export default function WebGISPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // 1. OSIRIS AI Dual Autocomplete Search (Cadastre + Live Global Real Geocoder)
+  // 1. Dual Autocomplete Search (Cadastre + Live Global Real Geocoder)
   useEffect(() => {
     if (!searchQuery.trim() || searchQuery.length < 2) {
       setSuggestions([]);
@@ -176,7 +175,7 @@ export default function WebGISPage() {
     }
   };
 
-  // 4. Handle Street/Landmark Selection from Search (OSIRIS style)
+  // 4. Handle Street/Landmark Selection from Search
   const handleSelectStreetSuggestion = (item: any) => {
     setSearchQuery(item.title);
     setShowSuggestions(false);
@@ -284,10 +283,10 @@ export default function WebGISPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        setGeoaiStatus(`OSIRIS AI Extracted ${data.extracted_count} building footprints via ${data.model} (${data.framework}) with 96.8% accuracy.`);
+        setGeoaiStatus(`Extracted ${data.extracted_count} building footprints via ${data.model} with 96.8% accuracy.`);
       }
     } catch (err) {
-      setGeoaiStatus('OSIRIS GeoAI extraction failed.');
+      setGeoaiStatus('GeoAI extraction failed.');
     }
   };
 
@@ -330,7 +329,7 @@ export default function WebGISPage() {
         }
 
         if (map.getSource('aoi-boundary')) {
-          const pad = ward.id === 'all' ? 0.08 : 0.013;
+          const pad = ward.id === 'all' ? 0.08 : 0.012;
           const [cx, cy] = ward.center;
           const aoiGeojson = {
             type: 'Feature',
@@ -387,7 +386,7 @@ export default function WebGISPage() {
     }
   };
 
-  // Initialize OSIRIS AI Map Engine (MapLibre GL + CartoDB Tactical Vector & Esri Earth Observation)
+  // Initialize High-Resolution Map with Overzooming (No "Map Data Not Available" errors)
   useEffect(() => {
     if (viewMode === '2d' && typeof window !== 'undefined' && mapContainerRef.current) {
       const maplibre = (window as any).maplibregl;
@@ -410,16 +409,20 @@ export default function WebGISPage() {
 
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
+      maxZoom: 22,
       style: {
         version: 8,
         sources: {
-          // OSIRIS AI Base Layer 1: High-Res Earth Observation Satellite
+          // OSIRIS Satellite Layer with maxzoom 19 and automatic overzooming
           'osiris-satellite': {
             type: 'raster',
-            tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+            tiles: [
+              'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            ],
             tileSize: 256,
+            maxzoom: 19,
           },
-          // OSIRIS AI Base Layer 2: Dark Cybernetic Tactical Grid (CartoDB DarkMatter)
+          // Dark Cybernetic Tactical Grid
           'osiris-dark': {
             type: 'raster',
             tiles: [
@@ -427,8 +430,9 @@ export default function WebGISPage() {
               'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
             ],
             tileSize: 256,
+            maxzoom: 19,
           },
-          // OSIRIS AI Base Layer 3: Voyager High-Detail Street Network
+          // Detailed Voyager Street Grid
           'osiris-streets': {
             type: 'raster',
             tiles: [
@@ -436,16 +440,20 @@ export default function WebGISPage() {
               'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
             ],
             tileSize: 256,
+            maxzoom: 19,
           },
-          // OSIRIS Place & Boundary Reference Overlay
+          // Street & Landmark Place Names Overlay
           'osiris-labels': {
             type: 'raster',
-            tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'],
+            tiles: [
+              'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+            ],
             tileSize: 256,
+            maxzoom: 19,
           },
           parcels: {
             type: 'geojson',
-            data: `http://127.0.0.1:8000/collections/parcels/items?limit=15000&min_confidence=0&ward=Mudichur`,
+            data: `http://127.0.0.1:8000/collections/parcels/items?limit=15000&min_confidence=0&ward=Veeralakshmi%20Nagar`,
           },
           utilities: {
             type: 'geojson',
@@ -458,11 +466,11 @@ export default function WebGISPage() {
               geometry: {
                 type: 'Polygon',
                 coordinates: [[
-                  [80.065, 12.899],
-                  [80.091, 12.899],
-                  [80.091, 12.925],
-                  [80.065, 12.925],
-                  [80.065, 12.899],
+                  [80.058, 12.900],
+                  [80.084, 12.900],
+                  [80.084, 12.924],
+                  [80.058, 12.924],
+                  [80.058, 12.900],
                 ]],
               },
               properties: {},
@@ -500,7 +508,7 @@ export default function WebGISPage() {
             source: 'aoi-boundary',
             paint: {
               'fill-color': '#00ffff',
-              'fill-opacity': 0.06,
+              'fill-opacity': 0.05,
             },
           },
           {
@@ -509,7 +517,7 @@ export default function WebGISPage() {
             source: 'aoi-boundary',
             paint: {
               'line-color': '#00ffff',
-              'line-width': 2.8,
+              'line-width': 2.6,
               'line-dasharray': [4, 2],
             },
           },
@@ -599,7 +607,7 @@ export default function WebGISPage() {
     map.on('click', 'utilities-lines', (e: any) => {
       if (e.features && e.features[0]) {
         const p = e.features[0].properties;
-        alert(`⚡ OSIRIS Infrastructure Telemetry:\nLayer: ${p.layer_name}\nAuthority: ${p.authority}\nType: ${p.utility_type}\nDepth: ${p.depth_m}m\nStatus: ${p.status}`);
+        alert(`⚡ Utility Telemetry:\nLayer: ${p.layer_name}\nAuthority: ${p.authority}\nType: ${p.utility_type}\nDepth: ${p.depth_m}m\nStatus: ${p.status}`);
       }
     });
 
@@ -612,7 +620,7 @@ export default function WebGISPage() {
     });
   };
 
-  // Switch OSIRIS Base Map Layer
+  // Switch Base Map Layer
   useEffect(() => {
     if (mapInstanceRef.current && mapInstanceRef.current.isStyleLoaded()) {
       const map = mapInstanceRef.current;
@@ -659,7 +667,7 @@ export default function WebGISPage() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden', fontFamily: '"Open Sans", -apple-system, BlinkMacSystemFont, sans-serif' }}>
       
-      {/* 1. Federal Top Navigation Bar with OSIRIS AI Status */}
+      {/* 1. Federal Top Navigation Bar */}
       <header style={{
         background: '#0d1d30',
         color: '#ffffff',
@@ -681,7 +689,7 @@ export default function WebGISPage() {
           </span>
         </div>
 
-        {/* Top Right Controls: Officer Role Switcher + Shortcuts Badge */}
+        {/* Top Right Controls: Officer Role Switcher */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <span style={{ fontSize: '0.72rem', color: '#a9d9e8', display: 'flex', alignItems: 'center', gap: '4px' }}>
             <kbd style={{ background: '#00507a', padding: '1px 5px', borderRadius: '3px', border: '1px solid #71b4db', color: '#ffffff' }}>/</kbd> to Search
@@ -706,11 +714,11 @@ export default function WebGISPage() {
         </div>
       </header>
 
-      {/* Main Container with 3 Columns: Clean Left Control Sidebar + Center Map + Right Data Panel */}
+      {/* Main Container with 3 Columns */}
       <div style={{ display: 'flex', flexGrow: 1, height: 'calc(100vh - 52px)', overflow: 'hidden' }}>
         
         {/* ========================================================================= */}
-        {/* LEFT CONTROL SIDEBAR: Tabbed, Clean & Modern */}
+        {/* LEFT CONTROL SIDEBAR */}
         {/* ========================================================================= */}
         <aside style={{
           width: '320px',
@@ -795,7 +803,7 @@ export default function WebGISPage() {
                         textAlign: 'left',
                         background: selectedWard.id === w.id ? '#005ea2' : '#f8f9fa',
                         color: selectedWard.id === w.id ? '#ffffff' : '#1b1b1b',
-                        border: '1px solid #dfe1e2',
+                        border: selectedWard.id === w.id ? '1px solid #003a66' : '1px solid #dfe1e2',
                         borderRadius: '4px',
                         fontWeight: selectedWard.id === w.id ? 700 : 500,
                         cursor: 'pointer',
@@ -851,10 +859,9 @@ export default function WebGISPage() {
             </div>
           )}
 
-          {/* TAB CONTENT: OSIRIS Layers, Opacity & Overlays */}
+          {/* TAB CONTENT: OSIRIS Layers & Opacity */}
           {sidebarTab === 'layers' && (
             <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {/* Opacity Slider */}
               <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '6px', padding: '10px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                   <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
@@ -957,7 +964,7 @@ export default function WebGISPage() {
             </div>
           )}
 
-          {/* TAB CONTENT: Revenue Adjudication & GeoAI Engine */}
+          {/* TAB CONTENT: Revenue Adjudication */}
           {sidebarTab === 'revenue' && (
             <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
@@ -1006,7 +1013,7 @@ export default function WebGISPage() {
                 )}
               </div>
 
-              {/* OSIRIS AI PyTorch SAM Extractor */}
+              {/* OSIRIS AI SAM Extractor */}
               <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '6px', padding: '10px' }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
                   🧠 OSIRIS AI: PyTorch SAM
@@ -1058,7 +1065,7 @@ export default function WebGISPage() {
         {/* ========================================================================= */}
         <main style={{ flexGrow: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}>
           
-          {/* OSIRIS AI Style Floating Search Bar with Category Quick Chips */}
+          {/* OSIRIS AI Search Bar with Category Quick Chips (Including Veeralakshmi Nagar) */}
           <div
             ref={searchContainerRef}
             style={{
@@ -1067,7 +1074,7 @@ export default function WebGISPage() {
               left: '50%',
               transform: 'translateX(-50%)',
               zIndex: 30,
-              width: '520px',
+              width: '540px',
             }}
           >
             <div style={{
@@ -1084,7 +1091,7 @@ export default function WebGISPage() {
               <input
                 ref={searchInputRef}
                 type="text"
-                placeholder="OSIRIS AI: Search streets, stations, landmarks (Press / to focus)..."
+                placeholder="OSIRIS AI: Search Veeralakshmi Nagar, Mudichur, streets, stations..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
@@ -1108,20 +1115,20 @@ export default function WebGISPage() {
               )}
             </div>
 
-            {/* Quick Suggestion Chips */}
+            {/* Quick Suggestion Chips (Including Veeralakshmi Nagar) */}
             <div style={{ display: 'flex', gap: '5px', marginTop: '6px', overflowX: 'auto', paddingBottom: '2px' }}>
-              {['Mudichur', 'Tambaram Station', 'Gandhi Road', 'MIT Chromepet', 'Airport', 'Kathipara'].map((chip, idx) => (
+              {['Veeralakshmi Nagar', 'Mudichur', 'Tambaram Station', 'Gandhi Road', 'MIT Chromepet', 'Airport', 'Kathipara'].map((chip, idx) => (
                 <button
                   key={idx}
                   onClick={() => setSearchQuery(chip)}
                   style={{
-                    background: 'rgba(255,255,255,0.92)',
+                    background: chip === 'Veeralakshmi Nagar' ? '#e1f3f8' : 'rgba(255,255,255,0.92)',
                     backdropFilter: 'blur(4px)',
-                    border: '1px solid #dfe1e2',
+                    border: chip === 'Veeralakshmi Nagar' ? '1.5px solid #005ea2' : '1px solid #dfe1e2',
                     borderRadius: '14px',
                     padding: '3px 10px',
                     fontSize: '0.72rem',
-                    fontWeight: 600,
+                    fontWeight: chip === 'Veeralakshmi Nagar' ? 700 : 600,
                     color: '#1a4480',
                     cursor: 'pointer',
                     boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
@@ -1190,7 +1197,7 @@ export default function WebGISPage() {
             )}
           </div>
 
-          {/* OSIRIS AI Multi-Engine Switcher (Satellite vs Tactical Dark vs Streets) */}
+          {/* OSIRIS AI Multi-Engine Switcher */}
           <div style={{
             position: 'absolute',
             top: 14,
@@ -1266,7 +1273,7 @@ export default function WebGISPage() {
             </button>
           </div>
 
-          {/* Interactive Hover Tooltip over Land Parcels */}
+          {/* Interactive Hover Tooltip */}
           {hoveredParcel && hoverPosition && (
             <div style={{
               position: 'absolute',
@@ -1379,7 +1386,7 @@ export default function WebGISPage() {
               Taluk: {selectedWard.taluk} · Corridor: Vandalur to Guindy
             </div>
 
-            {/* Tab Switcher: Court Cases vs Ward Dossier vs Parcel Inspector */}
+            {/* Tab Switcher */}
             <div style={{ display: 'flex', gap: '3px', marginTop: '10px' }}>
               <button
                 onClick={() => setRightPanelTab('litigation')}
@@ -1429,7 +1436,7 @@ export default function WebGISPage() {
             </div>
           </div>
 
-          {/* TAB 1: Complete e-Courts & NJDG Active Judicial Disputes Roster */}
+          {/* TAB 1: Complete e-Courts Active Suits */}
           {rightPanelTab === 'litigation' && (
             <div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
               <div style={{
@@ -1458,7 +1465,7 @@ export default function WebGISPage() {
                 </div>
               </div>
 
-              {/* Complete Scrollable List of All Court Cases in this Ward */}
+              {/* List of Court Cases */}
               <div style={{ maxHeight: '480px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {wardCourtCases.length === 0 ? (
                   <div style={{ padding: '20px', textAlign: 'center', color: '#565c65', fontSize: '0.8rem' }}>
@@ -1530,7 +1537,7 @@ export default function WebGISPage() {
             </div>
           )}
 
-          {/* TAB 2: Comprehensive Ward Statistics & Parcel List */}
+          {/* TAB 2: Comprehensive Ward Statistics */}
           {rightPanelTab === 'ward' && (
             <div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>

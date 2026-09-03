@@ -65,7 +65,22 @@ export const AVAILABLE_WARDS: WardLocation[] = [
     center: [80.078, 12.912],
     zoom: 15.2,
     parcelCountApprox: 1400,
-    majorStreets: ["Mudichur-Sriperumbudur Main Road", "Attai Valavu Street", "Parvathy Nagar Main Road", "Mudichur Eri Bund Road", "Kamarajar Street"],
+    majorStreets: ["Mudichur-Sriperumbudur Main Road", "Veeralakshmi Nagar 1st Main Road", "Veeralakshmi Nagar Cross Street", "Attai Valavu Street", "Parvathy Nagar Main Road", "Mudichur Eri Bund Road", "Kamarajar Street"],
+  },
+  {
+    id: "Veeralakshmi Nagar",
+    name: "Zone 6A · Veeralakshmi Nagar (Mudichur)",
+    taluk: "Tambaram Taluk",
+    center: [80.0712, 12.9124],
+    zoom: 16.2,
+    parcelCountApprox: 1200,
+    majorStreets: [
+      "Veeralakshmi Nagar 1st Main Road",
+      "Veeralakshmi Nagar 2nd Cross Street",
+      "Veeralakshmi Nagar Extension",
+      "Mudichur-Sriperumbudur Main Road",
+      "Parvathy Nagar Main Road"
+    ],
   },
   {
     id: "Tambaram",

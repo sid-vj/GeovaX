@@ -92,7 +92,7 @@ def _generate_tambaram_chromepet_parcels() -> list[dict[str, Any]]:
             101,
             ["Gandhi Road", "Kalaignar Street", "Peerkankaranai Main Road", "Lake View Street", "Bharathiyar Street"],
         ),
-        # 4. Mudichur: Sriperumbudur Main Rd, Attai Valavu, Parvathy Nagar
+        # 4. Mudichur: Sriperumbudur Main Rd, Veeralakshmi Nagar, Parvathy Nagar
         (
             "Mudichur",
             "Tambaram Taluk",
@@ -101,7 +101,18 @@ def _generate_tambaram_chromepet_parcels() -> list[dict[str, Any]]:
             14, 10,
             0.0016, 0.0018,
             201,
-            ["Mudichur-Sriperumbudur Main Road", "Attai Valavu Street", "Parvathy Nagar Main Road", "Mudichur Eri Bund Road", "Kamarajar Street"],
+            ["Mudichur-Sriperumbudur Main Road", "Veeralakshmi Nagar 1st Main Road", "Veeralakshmi Nagar Cross Street", "Attai Valavu Street", "Parvathy Nagar Main Road", "Mudichur Eri Bund Road", "Kamarajar Street"],
+        ),
+        # 4A. Veeralakshmi Nagar (Mudichur)
+        (
+            "Veeralakshmi Nagar",
+            "Tambaram Taluk",
+            "572",
+            80.069, 12.910,
+            12, 10,
+            0.0016, 0.0018,
+            241,
+            ["Veeralakshmi Nagar 1st Main Road", "Veeralakshmi Nagar 2nd Cross Street", "Veeralakshmi Nagar Extension", "Mudichur-Sriperumbudur Main Road", "Parvathy Nagar"],
         ),
         # 5. Tambaram: West Tambaram, Shanmugam Rd, Market, East Tambaram
         (
