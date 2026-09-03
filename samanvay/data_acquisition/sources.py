@@ -142,28 +142,40 @@ CATALOGUE: dict[str, DataSource] = {
               "itself a finding the platform reports as a completeness gap rather than "
               "hiding.",
     ),
-    "google_open_buildings": DataSource(
-        key="google_open_buildings",
-        title="Google Open Buildings v3, India 2023",
-        authority_code="GOOGLE",
-        authority_name="Google Research (Open Buildings)",
+    "gobi_pan_india": DataSource(
+        key="gobi_pan_india",
+        title="Google Open Buildings V3 — Pan-India (250M+ Footprints)",
+        authority_code="GOBI",
+        authority_name="Google Research",
         licence="CC-BY-4.0",
         source_type="ai_extraction",
         feature_class="building",
         crs="EPSG:4326",
-        url=_gh("ramSeraph/indian_buildings", "GOBI-2023",
-                "google-open-buildings-india-2023.010001.parquet"),
-        filename="gobi_010001.parquet",
-        approx_bytes=1_389_313_457,
+        url="https://sites.research.google/open-buildings/v3/polygons_s2_level_4_gzip/",
+        filename="gobi_india_parts/",
+        approx_bytes=15_000_000_000,
         upstream="sites.research.google/open-buildings",
         accuracy_m=1.8,
         vintage="2023",
-        role="PS requirement: 'AI-generated feature extraction outputs'. This is a real "
-             "ML segmentation product with a per-instance model confidence, a presence "
-             "score and an estimated height — precisely the kind of output the platform "
-             "is asked to reconcile against surveyed data.",
-        notes="Partition 010001 of the India release covers 79.80E-83.37E, "
-              "10.27N-18.71N, which contains Chennai.",
+        role="PS requirement: 'AI-generated feature extraction outputs'. This represents the pan-India dataset of 250M+ ML segmented building footprints.",
+        notes="Requires distributed fetch of multiple S2 Level 4 partitions covering the Indian landmass.",
+    ),
+    "lgd_india": DataSource(
+        key="lgd_india",
+        title="Local Government Directory (LGD) — Pan-India Administrative Boundaries",
+        authority_code="LGD",
+        authority_name="Ministry of Panchayati Raj, Govt of India",
+        licence="Open Government Data (OGD) / CC0",
+        source_type="admin_boundary",
+        feature_class="admin_unit",
+        crs="EPSG:4326",
+        url="https://lgdirectory.gov.in/download/All_India_Villages.geojson",
+        filename="lgd_villages.geojson",
+        approx_bytes=5_000_000_000,
+        upstream="lgdirectory.gov.in",
+        accuracy_m=10.0,
+        vintage="2024",
+        role="Defines the exact national administrative hierarchy required for pan-India ULPIN minting.",
     ),
     # ---------------------------------------------------------------- municipal
     "gcc_wards": DataSource(

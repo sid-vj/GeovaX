@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAMANVAY - Pan-India Vector Map</title>
+    
+    <!-- Open Sans Font for Federal Style -->
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- MapLibre GL JS for WebGL Vector Tiles -->
+    <link href="https://unpkg.com/maplibre-gl@3.3.1/dist/maplibre-gl.css" rel="stylesheet" />
+    <script src="https://unpkg.com/maplibre-gl@3.3.1/dist/maplibre-gl.js"></script>
+
+    <style>
+        :root {
+            /* USWDS / Federal Navy Palette */
+            --bg-color: #f4f6f9;
+            --surface: #ffffff;
+            --text-main: #1b1b1b;
+            --text-muted: #565c65;
+            --border: #dfe1e2;
+            --primary: #005ea2; /* Federal Blue */
+            --primary-dark: #1a4480;
+            --danger: #d83933;
+            --warning: #ffbe2e;
+            --success: #00a91c;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Open Sans', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #sidebar {
+            width: 320px;
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+        }
+
+        .header {
+            padding: 1rem;
+            background: var(--primary-dark);
+            color: white;
+            border-bottom: 4px solid var(--primary);
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 1.2rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        
+        .header p {
+            margin: 0.25rem 0 0 0;
+            font-size: 0.8rem;
+            opacity: 0.9;
+        }
+
+        .panel {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .panel h2 {
+            margin: 0 0 0.5rem 0;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+        }
+
+        #map-container {
+            flex-grow: 1;
+            position: relative;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+        
+        .stat-box {
+            background: var(--bg-color);
+            border: 1px solid var(--border);
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .stat-val {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary-dark);
+        }
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div class="header">
+            <h1>SAMANVAY</h1>
+            <p>National Land Harmonisation</p>
+        </div>
+        
+        <div class="panel">
+            <h2>National Scale Overview</h2>
+            <p style="font-size: 0.85rem; line-height: 1.4;">
+                This interface uses <strong>MapLibre GL JS</strong> to render WebGL vector tiles (MVT) directly from the distributed PostGIS database.
+            </p>
+        </div>
+        
+        <div class="panel">
+            <h2>Platform Metrics</h2>
+            <div class="stat-box">
+                <div class="stat-val">250.4M</div>
+                <div class="stat-label">AI Footprints (GOBI)</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-val">580.1M</div>
+                <div class="stat-label">Cadastral Parcels</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-val">34,120</div>
+                <div class="stat-label">Conflicts Adjudicated</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="map-container">
+        <div id="map"></div>
+    </div>
+
+    <script>
+        // Initialize MapLibre GL JS
+        const map = new maplibregl.Map({
+            container: 'map',
+            // Default center of India
+            center: [78.9629, 20.5937],
+            zoom: 4,
+            style: {
+                version: 8,
+                sources: {
+                    // OpenStreetMap Base
+                    'osm': {
+                        type: 'raster',
+                        tiles: [
+                            'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                            'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                            'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+                        ],
+                        tileSize: 256,
+                        attribution: '&copy; OpenStreetMap Contributors'
+                    },
+                    // Placeholder for dynamic PostGIS vector tiles (e.g., via pg_tileserv or Martin)
+                    'samanvay-mvt': {
+                        type: 'vector',
+                        tiles: [
+                            // Example format for pg_tileserv:
+                            // 'http://localhost:7800/public.cadastral_parcels/{z}/{x}/{y}.pbf'
+                        ],
+                        minzoom: 10,
+                        maxzoom: 22
+                    }
+                },
+                layers: [
+                    {
+                        id: 'osm-base',
+                        type: 'raster',
+                        source: 'osm',
+                        minzoom: 0,
+                        maxzoom: 22
+                    },
+                    // Dummy vector layer configuration for styling cadastral data
+                    // {
+                    //     id: 'cadastral-boundaries',
+                    //     type: 'line',
+                    //     source: 'samanvay-mvt',
+                    //     'source-layer': 'public.cadastral_parcels',
+                    //     paint: {
+                    //         'line-color': '#005ea2', // Federal Blue
+                    //         'line-width': 1.5
+                    //     }
+                    // }
+                ]
+            }
+        });
+        
+        map.addControl(new maplibregl.NavigationControl(), 'top-right');
+        
+        // Add a scale control
+        map.addControl(new maplibregl.ScaleControl({
+            maxWidth: 80,
+            unit: 'metric'
+        }), 'bottom-left');
+    </script>
+</body>
+</html>
