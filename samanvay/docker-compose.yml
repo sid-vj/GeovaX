@@ -1,0 +1,45 @@
+# Reference deployment. See docs/06-deployment.md for sizing and production topology.
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: samanvay
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-samanvay}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/samanvay/db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+
+  api:
+    build: ./backend
+    command: uvicorn samanvay.api.app:app --host 0.0.0.0 --port 8000
+    environment:
+      SAMANVAY_OUT: /data/out/chennai
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-samanvay}@db/samanvay
+    volumes:
+      - ./data:/data/data:ro
+      - ./out:/data/out
+      - ./frontend:/data/frontend:ro
+    depends_on:
+      db: { condition: service_healthy }
+    ports: ["8000:8000"]
+
+  worker:
+    build: ./backend
+    command: python -m samanvay.pipeline.worker
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-samanvay}@db/samanvay
+    volumes:
+      - ./data:/data/data
+      - ./out:/data/out
+    depends_on: [redis, db]
+
+volumes:
+  pgdata:

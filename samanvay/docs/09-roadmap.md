@@ -73,10 +73,6 @@ already supports it — the DAG does not yet exploit it.
 `docs/06-deployment.md`; what remains is the institutional work — an MoU on data sharing
 between the corporation and the revenue department, and a decision on who owns the queue.
 
-7. **Generative Draft FMB (Field Measurement Book) Creation.** GIS systems store geodesic polygons; Indian revenue systems require topological surveyor sketches. The platform will take a harmonised geodesic polygon, reproject it to a planar CRS, calculate the longest diagonal (G-line), and drop perpendiculars to all vertices. The output will be serialised natively as **CollabLand XML** (the NIC standard) so the state's existing cadastral software can natively ingest and stamp the FMB without redrawing, alongside a generated PDF/A sketch in the regional language.
-
-8. **Predictive Litigation Hotspot Mapping.** Using the Dempster-Shafer conflict mass (K) as a base, the platform will ingest active property dispute metadata from the **e-Courts Services / NJDG API** and Encumbrance Certificate flags from the **State Registration API (e.g., TN STAR 2.0)**. Fusing internal geometric tension with external legal flags will produce a dynamic litigation risk index, exposed via OGC API - Features as Mapbox Vector Tiles (MVT) so District Collectors can proactively direct drone survey budgets to high-risk zones.
-
 ---
 
 ## What would make this fail in production

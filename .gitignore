@@ -1,0 +1,11 @@
+.venv/
+samanvay/.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+samanvay/.pytest_cache/
+samanvay/out/
+samanvay/data/raw/
+samanvay/data/aoi/
+.DS_Store
+**/node_modules/

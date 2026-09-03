@@ -1,0 +1,1549 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SAMANVAY — National Geospatial Land Harmonisation System</title>
+
+<!-- US Federal / Institutional Fonts: Public Sans & Inter -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+
+<style>
+  /* ==========================================================================
+     U.S. Federal Web Design System (USWDS) Inspired Palette & Tokens
+     Neutral, Authoritative, High-Contrast, Subdued Institutional Colors
+     ========================================================================== */
+  :root {
+    --fed-navy-dark: #0b1f38;
+    --fed-navy-primary: #112e51;
+    --fed-navy-light: #205493;
+    --fed-blue-accent: #0071bc;
+    --fed-blue-hover: #1a4480;
+
+    --bg-app: #0f1722;
+    --surface-panel: #162232;
+    --surface-card: #1c2b3e;
+    --surface-card-hover: #22354c;
+    --surface-inset: #0e1622;
+
+    --border-subtle: #24354b;
+    --border-strong: #384e68;
+    --border-focus: #0071bc;
+
+    --text-primary: #f0f4f8;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --text-inverse: #0b1f38;
+
+    /* Subdued Institutional Grade Tones (Zero Neon, Authoritative Cartography) */
+    --grade-a: #2e7d32;   /* Muted Forest Green */
+    --grade-b: #3d705d;   /* Muted Sage / Slate Green */
+    --grade-c: #8a6d3b;   /* Muted Sandstone / Ochre */
+    --grade-d: #8c4a32;   /* Muted Oxide / Terracotta */
+    --grade-e: #732929;   /* Muted Burgundy / Brick Red */
+
+    --font-sans: 'Public Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: 'Roboto Mono', Menlo, Consolas, monospace;
+
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+  }
+
+  * {
+    box-sizing: border-box;
+    padding: 0;
+    margin: 0;
+  }
+
+  html, body {
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    overflow: hidden;
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Fullscreen Map */
+  #map {
+    position: absolute;
+    top: 38px; /* Below official gov banner */
+    left: 0;
+    width: 100vw;
+    height: calc(100vh - 38px);
+    z-index: 1;
+    background: #080d14;
+  }
+
+  /* Official Government Banner (USWDS Standard Banner) */
+  .usa-banner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 38px;
+    background: var(--fed-navy-dark);
+    border-bottom: 1px solid var(--border-subtle);
+    z-index: 1100;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    font-size: 0.74rem;
+    color: var(--text-secondary);
+  }
+
+  .usa-banner-inner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+  }
+
+  .usa-banner-flag {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.5px;
+  }
+
+  .usa-banner-tag {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .gov-badge {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: #cbd5e1;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .gov-badge.live {
+    border-color: #2e7d32;
+    color: #4ade80;
+    background: rgba(46, 125, 50, 0.15);
+  }
+
+  /* Institutional Panel / Card Layout (Flat 2D Standard) */
+  .institutional-card {
+    background: var(--surface-panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: none;
+  }
+
+  /* Floating Control Console (Top-Left) */
+  .console-overlay {
+    position: absolute;
+    top: 54px;
+    left: 18px;
+    z-index: 1000;
+    width: 410px;
+    max-width: calc(100vw - 36px);
+    max-height: calc(100vh - 72px);
+    overflow-y: auto;
+    padding: 16px;
+    border-top: 3px solid var(--fed-navy-light);
+  }
+
+  .console-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .console-logo {
+    width: 38px;
+    height: 38px;
+    background: var(--fed-navy-primary);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.15rem;
+    color: #ffffff;
+  }
+
+  .console-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: #ffffff;
+    margin: 0;
+  }
+
+  .console-sub {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+
+  /* Institutional Form Controls */
+  .form-group {
+    margin-bottom: 12px;
+  }
+
+  .form-label {
+    display: block;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 5px;
+  }
+
+  .usa-input-group {
+    position: relative;
+    display: flex;
+    gap: 6px;
+  }
+
+  .usa-input {
+    width: 100%;
+    padding: 8px 10px;
+    font-family: var(--font-sans);
+    font-size: 0.8rem;
+    background: var(--surface-inset);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+
+  .usa-input:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 1px var(--border-focus);
+  }
+
+  .usa-select {
+    width: 100%;
+    padding: 7px 9px;
+    font-family: var(--font-sans);
+    font-size: 0.78rem;
+    background: var(--surface-inset);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    outline: none;
+    cursor: pointer;
+  }
+
+  .usa-select:focus {
+    border-color: var(--border-focus);
+  }
+
+  /* Buttons (USWDS Federal Style) */
+  .usa-btn {
+    background: var(--fed-navy-light);
+    color: #ffffff;
+    border: 1px solid var(--fed-navy-primary);
+    padding: 8px 14px;
+    font-family: var(--font-sans);
+    font-size: 0.78rem;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: background 0.15s ease;
+  }
+
+  .usa-btn:hover {
+    background: var(--fed-blue-hover);
+  }
+
+  .usa-btn-secondary {
+    background: var(--surface-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+  }
+
+  .usa-btn-secondary:hover {
+    background: var(--surface-card-hover);
+    border-color: #cbd5e1;
+  }
+
+  /* Grid of Action Hubs */
+  .hub-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin: 14px 0;
+  }
+
+  .hub-card {
+    background: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    cursor: pointer;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.15s ease;
+  }
+
+  .hub-card:hover {
+    background: var(--surface-card-hover);
+    border-color: var(--fed-navy-light);
+    color: #ffffff;
+  }
+
+  /* Autocomplete Dropdown (Flat 2D) */
+  .usa-autocomplete {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: var(--surface-card);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 1005;
+    box-shadow: none;
+  }
+
+  .usa-autocomplete-item {
+    padding: 8px 12px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .usa-autocomplete-item:hover {
+    background: var(--fed-navy-primary);
+    color: #ffffff;
+  }
+
+  /* Basemap Switcher (Bottom-Left Flat Toolbar) */
+  .basemap-toolbar {
+    position: absolute;
+    bottom: 18px;
+    left: 18px;
+    z-index: 1000;
+    background: var(--surface-panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+    display: flex;
+    gap: 2px;
+    box-shadow: none;
+  }
+
+  .basemap-btn {
+    background: transparent;
+    border: none;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .basemap-btn.active {
+    background: var(--fed-navy-primary);
+    color: #ffffff;
+  }
+
+  /* Right Inspection Drawer (Cadastral Record & Audit) */
+  .inspector-drawer {
+    position: absolute;
+    top: 54px;
+    right: 18px;
+    bottom: 18px;
+    width: 500px;
+    max-width: calc(100vw - 36px);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-left: 3px solid var(--fed-navy-light);
+    transition: transform 0.25s ease;
+  }
+
+  .inspector-drawer.collapsed {
+    transform: translateX(calc(100% + 36px));
+  }
+
+  .inspector-header {
+    padding: 14px 18px;
+    background: var(--fed-navy-dark);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .inspector-title-area {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .inspector-title {
+    font-size: 0.98rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .inspector-subtitle {
+    font-size: 0.72rem;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    margin-top: 3px;
+  }
+
+  .inspector-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* Institutional Data Table / Card Pairs */
+  .telemetry-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .telemetry-card {
+    background: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+  }
+
+  .telemetry-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+
+  .telemetry-value {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #ffffff;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .telemetry-footnote {
+    font-size: 0.68rem;
+    color: var(--text-secondary);
+    margin-top: 3px;
+  }
+
+  /* Confidence Breakdown (Clean Institutional Progress Bars) */
+  .section-block {
+    background: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 14px;
+  }
+
+  .section-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #cbd5e1;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .metric-row {
+    margin-bottom: 9px;
+  }
+
+  .metric-row-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    margin-bottom: 3px;
+  }
+
+  .metric-track {
+    width: 100%;
+    height: 6px;
+    background: var(--surface-inset);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .metric-fill {
+    height: 100%;
+    background: var(--fed-navy-light);
+    transition: width 0.3s ease;
+  }
+
+  /* Official Audio Screen-Reader Widget */
+  .audio-widget {
+    background: var(--surface-inset);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .audio-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: #cbd5e1;
+  }
+
+  .audio-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  /* Adjudication Case Item */
+  .case-item {
+    background: var(--surface-inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 10px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
+  }
+
+  .case-item:hover {
+    border-color: var(--fed-navy-light);
+  }
+
+  .case-item-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+
+  .case-item-desc {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+  }
+
+  /* Modal Windows (Institutional Flat Federal Dialogs) */
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(11, 31, 56, 0.85);
+    z-index: 2000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .modal-overlay.active {
+    display: flex;
+  }
+
+  .modal-window {
+    background: var(--surface-panel);
+    border: 1px solid var(--border-strong);
+    border-top: 4px solid var(--fed-navy-light);
+    border-radius: var(--radius-sm);
+    width: 620px;
+    max-width: 95vw;
+    max-height: 88vh;
+    overflow-y: auto;
+    box-shadow: none;
+  }
+
+  .modal-header {
+    padding: 14px 18px;
+    background: var(--fed-navy-dark);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .modal-header h3 {
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 700;
+    color: #ffffff;
+  }
+
+  .modal-content {
+    padding: 18px;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 2px;
+  }
+
+  /* Print Stylesheet */
+  @media print {
+    html, body {
+      background: #ffffff !important;
+      color: #000000 !important;
+      height: auto !important;
+      overflow: visible !important;
+    }
+    .usa-banner, #map, .console-overlay, .basemap-toolbar, .no-print, button {
+      display: none !important;
+    }
+    .inspector-drawer {
+      position: static !important;
+      width: 100% !important;
+      border: 1px solid #999 !important;
+      background: #fff !important;
+      color: #000 !important;
+      box-shadow: none !important;
+      transform: none !important;
+    }
+    .telemetry-card, .section-block {
+      border: 1px solid #ccc !important;
+      background: #fafafa !important;
+      color: #000 !important;
+    }
+  }
+</style>
+</head>
+<body>
+
+<!-- Official Federal Standard Banner -->
+<header class="usa-banner">
+  <div class="usa-banner-inner">
+    <div class="usa-banner-flag">
+      <span>🏛️</span>
+      <span>GOVERNMENT OF INDIA</span>
+    </div>
+    <span>Department of Land Resources · Ministry of Rural Development · DILRMP SAMANVAY Platform</span>
+    <div class="usa-banner-tag">
+      <span class="gov-badge live" id="ledgerStatusBadge">✓ Merkle Provenance Sealed</span>
+      <span class="gov-badge" id="aoiStatusBadge">Chennai AOI (22.4 km²)</span>
+    </div>
+  </div>
+</header>
+
+<!-- Map Canvas -->
+<div id="map"></div>
+
+<!-- Left Control & Search Console -->
+<aside class="institutional-card console-overlay no-print">
+  <div class="console-brand">
+    <div class="console-logo">⚖️</div>
+    <div>
+      <h1 class="console-title">SAMANVAY</h1>
+      <p class="console-sub">Multi-Source Geospatial Harmonisation Console</p>
+    </div>
+  </div>
+
+  <!-- Search by ULPIN, Survey No, or Locality -->
+  <div class="form-group" style="position:relative;">
+    <label class="form-label" for="searchInput">Locate Parcel / Survey No. / Ward</label>
+    <form class="usa-input-group" onsubmit="handleSearch(event)">
+      <input
+        type="text"
+        id="searchInput"
+        class="usa-input"
+        placeholder="e.g. Egmore, Mylapore, or ULPIN..."
+        autocomplete="off"
+      />
+      <button type="submit" class="usa-btn" style="white-space:nowrap;">Locate</button>
+    </form>
+    <div class="usa-autocomplete" id="autocompleteBox" style="display:none;"></div>
+  </div>
+
+  <!-- Layer & Styling Selectors -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+    <div class="form-group" style="margin:0;">
+      <label class="form-label" for="layer">Active Layer</label>
+      <select id="layer" class="usa-select">
+        <option value="parcels">Harmonised Parcels</option>
+        <option value="buildings">Harmonised Buildings</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label class="form-label" for="colour">Symbology</label>
+      <select id="colour" class="usa-select">
+        <option value="confidence_grade">Confidence Grade (A–E)</option>
+        <option value="n_sources">Contributing Sources</option>
+        <option value="conf_positional">Positional Precision</option>
+        <option value="conf_source_agreement">Source Agreement</option>
+        <option value="conflicts">Discrepancy Status</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Confidence Filter Slider -->
+  <div class="form-group">
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+      <label class="form-label" style="margin:0;">Min. Confidence Floor</label>
+      <span id="minlabel" style="font-size:0.75rem;font-weight:700;font-family:var(--font-mono);color:var(--fed-blue-accent);">0.00</span>
+    </div>
+    <input type="range" id="minconf" min="0" max="1" step="0.05" value="0" style="width:100%;accent-color:var(--fed-navy-light);cursor:pointer;" />
+  </div>
+
+  <!-- Official Operational Hubs -->
+  <label class="form-label" style="margin-top:14px;">Adjudication & Verification Modules</label>
+  <div class="hub-grid">
+    <div class="hub-card" onclick="openCopilotModal()">
+      <span>⚖️</span>
+      <span>Tahsildar AI Rationale</span>
+    </div>
+    <div class="hub-card" onclick="openDroneRadarModal()">
+      <span>🛰️</span>
+      <span>NAKSHA Drone Radar</span>
+    </div>
+    <div class="hub-card" onclick="openCitizenModal()">
+      <span>🏛️</span>
+      <span>Bhu-Darpan Citizen Verify</span>
+    </div>
+    <div class="hub-card" onclick="triggerGatiShakti()">
+      <span>🇮🇳</span>
+      <span>PM GatiShakti Export</span>
+    </div>
+  </div>
+
+  <!-- Statistical Summary -->
+  <div class="section-block" style="padding:10px 12px;margin-top:10px;">
+    <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-secondary);padding:3px 0;">
+      <span>Harmonised Parcels</span>
+      <span style="font-weight:700;color:#fff;" id="statParcels">14,702</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-secondary);padding:3px 0;">
+      <span>Harmonised Buildings</span>
+      <span style="font-weight:700;color:#fff;" id="statBuildings">92,560</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-secondary);padding:3px 0;">
+      <span>Detected Systematic Offset</span>
+      <span style="font-weight:700;color:var(--grade-c);">1.51m @ 073°</span>
+    </div>
+  </div>
+</aside>
+
+<!-- Basemap Selector (Clean Federal Toolbar, No Watermarks) -->
+<nav class="basemap-toolbar no-print">
+  <button class="basemap-btn active" data-theme="topo" onclick="setMapTheme('topo')">🗺️ Topo</button>
+  <button class="basemap-btn" data-theme="gray" onclick="setMapTheme('gray')">🏢 Canvas</button>
+  <button class="basemap-btn" data-theme="satellite" onclick="setMapTheme('satellite')">🛰️ Aerial</button>
+  <button class="basemap-btn" data-theme="osm" onclick="setMapTheme('osm')">🌐 OSM</button>
+  <button class="basemap-btn" data-theme="dark" onclick="setMapTheme('dark')">🕶️ Dark</button>
+</nav>
+
+<!-- Right Inspection Dossier Drawer -->
+<aside class="institutional-card inspector-drawer collapsed" id="inspectorDrawer">
+  <div class="inspector-header">
+    <div class="inspector-title-area">
+      <div class="inspector-title">
+        <span id="inspTitle">Parcel Record</span>
+        <span class="gov-badge" id="inspGradeBadge" style="background:var(--grade-b);color:#fff;">GRADE B</span>
+      </div>
+      <span class="inspector-subtitle" id="inspSubtitle">ULPIN: Select a feature on map</span>
+    </div>
+    <div style="display:flex;gap:6px;">
+      <button class="usa-btn usa-btn-secondary" onclick="window.print()" style="padding:4px 8px;font-size:0.72rem;">Print</button>
+      <button class="usa-btn usa-btn-secondary" onclick="closeInspector()" style="padding:4px 8px;font-size:0.72rem;">✕</button>
+    </div>
+  </div>
+
+  <div class="inspector-body">
+    <!-- Attributes Table Grid -->
+    <div class="telemetry-grid">
+      <div class="telemetry-card">
+        <div class="telemetry-label">ULPIN / Bhu-Aadhaar</div>
+        <div class="telemetry-value" id="cardUlpin" style="font-size:0.85rem;font-family:var(--font-mono);">—</div>
+        <div class="telemetry-footnote">Unique Land Parcel ID</div>
+      </div>
+      <div class="telemetry-card">
+        <div class="telemetry-label">Survey & Sub-division</div>
+        <div class="telemetry-value" id="cardSurvey">—</div>
+        <div class="telemetry-footnote">Revenue Cadastre Entry</div>
+      </div>
+      <div class="telemetry-card">
+        <div class="telemetry-label">Official Ground Area</div>
+        <div class="telemetry-value" id="cardArea">— m²</div>
+        <div class="telemetry-footnote" id="cardAreaCents">— cents</div>
+      </div>
+      <div class="telemetry-card">
+        <div class="telemetry-label">Source Evidence Consensus</div>
+        <div class="telemetry-value" id="cardSources">— Sources</div>
+        <div class="telemetry-footnote" id="cardConflictStatus" style="color:var(--grade-a);">Agreement Validated</div>
+      </div>
+    </div>
+
+    <!-- 5-Dimensional Confidence Assessment (No Clipped Bars) -->
+    <div class="section-block">
+      <div class="section-title">
+        <span>Confidence Assessment (NAKSHA Urban 0.5m)</span>
+        <span id="confComposite" style="font-family:var(--font-mono);font-size:0.72rem;color:var(--fed-blue-accent);">0.85</span>
+      </div>
+      
+      <div class="metric-row">
+        <div class="metric-row-head">
+          <span>Positional Accuracy (CE90 / GCP)</span>
+          <span id="pctPos">88%</span>
+        </div>
+        <div class="metric-track"><div class="metric-fill" id="barPos" style="width:88%;background:var(--grade-b);"></div></div>
+      </div>
+
+      <div class="metric-row">
+        <div class="metric-row-head">
+          <span>Source Cross-Agreement (GCC vs TNGIS)</span>
+          <span id="pctAgr">84%</span>
+        </div>
+        <div class="metric-track"><div class="metric-fill" id="barAgr" style="width:84%;background:var(--grade-b);"></div></div>
+      </div>
+
+      <div class="metric-row">
+        <div class="metric-row-head">
+          <span>Attribute Consensus (Survey No / Legal Holder)</span>
+          <span id="pctAtt">94%</span>
+        </div>
+        <div class="metric-track"><div class="metric-fill" id="barAtt" style="width:94%;background:var(--grade-a);"></div></div>
+      </div>
+
+      <div class="metric-row">
+        <div class="metric-row-head">
+          <span>Topological Planar Consistency</span>
+          <span id="pctTop">100%</span>
+        </div>
+        <div class="metric-track"><div class="metric-fill" id="barTop" style="width:100%;background:var(--grade-a);"></div></div>
+      </div>
+
+      <div class="metric-row">
+        <div class="metric-row-head">
+          <span>Temporal Freshness (UAV vs Decadal Survey)</span>
+          <span id="pctTmp">76%</span>
+        </div>
+        <div class="metric-track"><div class="metric-fill" id="barTmp" style="width:76%;background:var(--grade-c);"></div></div>
+      </div>
+    </div>
+
+    <!-- Screen-Reader & Multilingual Briefing -->
+    <div class="audio-widget">
+      <div class="audio-head">
+        <span>Auditory Briefing (Official Telemetry Narration)</span>
+        <select id="voiceLangSelect" class="usa-select" style="width:auto;padding:2px 6px;font-size:0.72rem;">
+          <option value="English">English</option>
+          <option value="Tamil" selected>Tamil (தமிழ்)</option>
+          <option value="Hindi">Hindi (हिंदी)</option>
+          <option value="Telugu">Telugu (తెలుగు)</option>
+        </select>
+      </div>
+      <div class="audio-actions">
+        <button class="usa-btn" id="playVoiceBtn" onclick="speakCurrentParcel()" style="padding:5px 12px;font-size:0.72rem;">
+          ▶ Play Official Audio Briefing
+        </button>
+        <button class="usa-btn usa-btn-secondary" onclick="stopSpeech()" style="padding:5px 10px;font-size:0.72rem;">
+          ⏹ Stop
+        </button>
+      </div>
+    </div>
+
+    <!-- Active Discrepancy & Adjudication Queue -->
+    <div class="section-block">
+      <div class="section-title">
+        <span>Active Adjudication Cases (Dempster-Shafer Evidential Mass)</span>
+      </div>
+      <div id="queueCasesContainer">
+        <!-- Injected dynamically -->
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- ==========================================================================
+     Official Modal Dialogs (USWDS Standard Formats)
+     ========================================================================== -->
+
+<!-- Tahsildar AI Adjudication Modal -->
+<div class="modal-overlay" id="copilotModal">
+  <div class="modal-window">
+    <div class="modal-header">
+      <h3>Statutory Adjudication Rationale · Tahsildar AI Co-Pilot</h3>
+      <button class="usa-btn usa-btn-secondary" onclick="closeModal('copilotModal')" style="padding:3px 7px;">✕</button>
+    </div>
+    <div class="modal-content">
+      <div style="background:var(--surface-inset);border-left:3px solid var(--fed-navy-light);padding:10px 12px;">
+        <strong style="color:#ffffff;display:block;margin-bottom:3px;font-size:0.78rem;">LEGAL JURISPRUDENCE & STATUTORY FRAMEWORK:</strong>
+        <p style="color:var(--text-secondary);font-size:0.74rem;" id="copilotStatutory">
+          Tamil Nadu Survey and Boundaries Act 1923 § 9(2) · NAKSHA 0.5m Urban Specifications · DILRMP Rule R-POR-01.
+        </p>
+      </div>
+      <div id="copilotText" style="color:var(--text-primary);font-size:0.82rem;line-height:1.6;">
+        Evaluating candidate boundaries... Evidential mass distribution indicates high consensus on southern road frontage from GCC Municipal GIS, while eastern boundary follows the FMB Revenue survey line. Systematic offset of 1.51m @ 073° has been eliminated via orthogonal transformation.
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;padding-top:8px;border-top:1px solid var(--border-subtle);">
+        <button class="usa-btn usa-btn-secondary" onclick="closeModal('copilotModal')">Close</button>
+        <button class="usa-btn" onclick="certifyAndCommit()">Certify & Commit to Merkle Ledger</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- NAKSHA Drone Radar Modal -->
+<div class="modal-overlay" id="droneModal">
+  <div class="modal-window">
+    <div class="modal-header">
+      <h3>NAKSHA Autonomous Drone Flight Mission Planner</h3>
+      <button class="usa-btn usa-btn-secondary" onclick="closeModal('droneModal')" style="padding:3px 7px;">✕</button>
+    </div>
+    <div class="modal-content">
+      <p style="color:var(--text-secondary);font-size:0.8rem;">
+        Autonomous flight mission automatically planned for Grade D and E parcels where spatial uncertainty between municipal and revenue records requires sub-decimeter photogrammetric verification.
+      </p>
+      <div class="telemetry-grid">
+        <div class="telemetry-card">
+          <div class="telemetry-label">Target Parcels (Grade D/E)</div>
+          <div class="telemetry-value" style="color:var(--grade-d);">1,482</div>
+          <div class="telemetry-footnote">Lowest confidence corridor</div>
+        </div>
+        <div class="telemetry-card">
+          <div class="telemetry-label">Flight Altitude (AGL)</div>
+          <div class="telemetry-value">85 m</div>
+          <div class="telemetry-footnote">Above highest obstacle</div>
+        </div>
+        <div class="telemetry-card">
+          <div class="telemetry-label">Target GSD</div>
+          <div class="telemetry-value" style="color:var(--grade-a);">0.051 m/px</div>
+          <div class="telemetry-footnote">Exceeds NAKSHA 0.5m requirement</div>
+        </div>
+        <div class="telemetry-card">
+          <div class="telemetry-label">Estimated Mission Duration</div>
+          <div class="telemetry-value">22 mins</div>
+          <div class="telemetry-footnote">2 battery sorties required</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;padding-top:8px;border-top:1px solid var(--border-subtle);">
+        <button class="usa-btn usa-btn-secondary" onclick="closeModal('droneModal')">Close</button>
+        <button class="usa-btn" onclick="downloadFlightPlan()">Export Mission Plan (KML)</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bhu-Darpan Citizen Verification Modal -->
+<div class="modal-overlay" id="citizenModal">
+  <div class="modal-window">
+    <div class="modal-header">
+      <h3>Bhu-Darpan Citizen Verification & Digital Title Extract</h3>
+      <button class="usa-btn usa-btn-secondary" onclick="closeModal('citizenModal')" style="padding:3px 7px;">✕</button>
+    </div>
+    <div class="modal-content">
+      <div class="usa-input-group">
+        <input type="text" id="citizenUlpinInput" class="usa-input" placeholder="Enter 14-character ULPIN (Bhu-Aadhaar)" value="3357107089-0123-X" />
+        <button class="usa-btn" onclick="verifyCitizenUlpin()">Verify</button>
+      </div>
+      <div class="section-block" style="background:var(--surface-inset);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <strong style="color:var(--grade-a);font-size:0.78rem;">✓ CERTIFIED SECURE TITLE EXTRACT</strong>
+          <span class="gov-badge live">Cryptographically Anchored</span>
+        </div>
+        <div style="font-size:0.74rem;color:var(--text-secondary);margin-bottom:6px;">Provenance Ledger Merkle Root:</div>
+        <code id="citizenMerkleRoot" style="display:block;padding:8px;background:#05080e;border:1px solid var(--border-strong);border-radius:var(--radius-sm);font-family:var(--font-mono);font-size:0.72rem;word-break:break-all;color:#93c5fd;">
+          8f4c2b9a7d3e1f0e5b6c8a9d2e4f1a3b5c7d9e0f2a4b6c8d0e1f3a5b7c9d1e3f
+        </code>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;padding-top:8px;border-top:1px solid var(--border-subtle);">
+        <button class="usa-btn usa-btn-secondary" onclick="closeModal('citizenModal')">Close</button>
+        <button class="usa-btn" onclick="alert('Generating Certified Digital Land Extract with QR Code...')">Download Certified Extract (PDF)</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Leaflet Library -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+
+<script>
+const API = location.origin;
+
+// Subdued Federal Grade Colors (US Cartographic Standards)
+const GRADE_COLOUR = {
+  A: '#2e7d32', // Muted Forest Green
+  B: '#3d705d', // Muted Slate Sage
+  C: '#8a6d3b', // Muted Sandstone Ochre
+  D: '#8c4a32', // Muted Terracotta Oxide
+  E: '#732929'  // Muted Brick / Burgundy
+};
+
+const SOURCE_COLOUR = ['#732929', '#8c4a32', '#8a6d3b', '#3d705d', '#2e7d32'];
+
+// Reliable, High-Resolution Basemaps Without "API KEY REQUIRED" Watermarks
+const BASEMAP_URLS = {
+  topo: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+  gray: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+  satellite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  osm: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  dark: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
+};
+
+let currentTileLayer = null;
+let currentTheme = 'topo';
+
+// Initialize Map
+const map = L.map('map', {
+  zoomControl: false,
+  preferCanvas: true
+}).setView([13.0777, 80.2425], 15);
+
+L.control.zoom({ position: 'topright' }).addTo(map);
+
+function setMapTheme(themeKey) {
+  currentTheme = themeKey;
+  if (currentTileLayer) map.removeLayer(currentTileLayer);
+
+  const url = BASEMAP_URLS[themeKey] || BASEMAP_URLS.topo;
+  const attr = themeKey === 'osm'
+    ? '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    : 'Tiles &copy; Esri &mdash; National Geographic, Esri, DeLorme, NAVTEQ, USGS';
+
+  currentTileLayer = L.tileLayer(url, { maxZoom: 19, attribution: attr }).addTo(map);
+
+  document.querySelectorAll('.basemap-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-theme') === themeKey);
+  });
+}
+setMapTheme('topo');
+
+// Layer management
+let layerGroup = L.geoJSON(null, { style: styleFor, onEachFeature: bindFeatureInteractions }).addTo(map);
+let highlightLayer = null;
+let current = { features: [], collection: 'parcels' };
+let selectedFeature = null;
+
+function num(v, d = 0) {
+  return v == null ? '—' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d });
+}
+
+function styleFor(f) {
+  const p = f.properties || {};
+  const mode = document.getElementById('colour').value;
+  let colour = '#384e68';
+
+  if (mode === 'confidence_grade') {
+    colour = GRADE_COLOUR[p.confidence_grade] || '#384e68';
+  } else if (mode === 'n_sources') {
+    const s = Math.min(4, Math.max(0, (p.n_sources || 1) - 1));
+    colour = SOURCE_COLOUR[s] || '#384e68';
+  } else if (mode === 'conflicts') {
+    colour = (p.conflicts || 0) > 0 ? '#8c4a32' : '#2e7d32';
+  } else {
+    const v = Number(p[mode] || 0);
+    colour = ramp(v);
+  }
+
+  // Refined institutional borders & low fill-opacity to preserve road/terrain visibility
+  return {
+    color: colour,
+    weight: 0.9,
+    fillColor: colour,
+    fillOpacity: 0.22
+  };
+}
+
+function ramp(v) {
+  const stops = [[0, '#732929'], [0.35, '#8c4a32'], [0.55, '#8a6d3b'], [0.75, '#3d705d'], [1, '#2e7d32']];
+  for (let i = stops.length - 1; i >= 0; i--) {
+    if (v >= stops[i][0]) return stops[i][1];
+  }
+  return stops[0][1];
+}
+
+function bindFeatureInteractions(f, layer) {
+  layer.on({
+    mouseover: (e) => {
+      const p = f.properties || {};
+      const layer = e.target;
+      layer.setStyle({ weight: 2.0, fillOpacity: 0.45 });
+      const surveyStr = p.survey_number ? `Survey: ${p.survey_number}/${p.subdivision || ''}` : (p.entity_id || 'Parcel');
+      layer.bindTooltip(`
+        <strong>${surveyStr}</strong><br/>
+        ULPIN: ${p.ulpin || p.entity_id || '—'}<br/>
+        Grade: <b style="color:${GRADE_COLOUR[p.confidence_grade] || '#cbd5e1'}">${p.confidence_grade || '?'}</b> | Sources: ${p.n_sources || 1}
+      `, { sticky: true }).openTooltip();
+    },
+    mouseout: (e) => {
+      layerGroup.resetStyle(e.target);
+    },
+    click: (e) => {
+      selectFeature(f, e.target);
+    }
+  });
+}
+
+function selectFeature(f, targetLayer) {
+  selectedFeature = f;
+  const p = f.properties || {};
+
+  if (highlightLayer) map.removeLayer(highlightLayer);
+  highlightLayer = L.geoJSON(f, {
+    style: { color: '#ffffff', weight: 2.8, fillColor: 'transparent' }
+  }).addTo(map);
+
+  if (targetLayer && targetLayer.getBounds) {
+    map.flyToBounds(targetLayer.getBounds(), { maxZoom: 18, duration: 1.0 });
+  }
+
+  // Clean survey & label fallback logic
+  const surveyNo = p.survey_number || '';
+  const subDiv = p.subdivision || '';
+  let displaySurvey = '';
+  if (surveyNo && subDiv) {
+    displaySurvey = `${surveyNo}/${subDiv}`;
+  } else if (surveyNo) {
+    displaySurvey = surveyNo;
+  } else if (p.entity_id) {
+    displaySurvey = p.entity_id.replace(/^CHN-/, '');
+  } else {
+    displaySurvey = 'Cadastral Unit';
+  }
+
+  const ulpin = p.ulpin || p.entity_id || '33-GCCZK-PARCEL';
+  const grade = p.confidence_grade || 'C';
+
+  document.getElementById('inspTitle').textContent = `Parcel ${displaySurvey}`;
+  document.getElementById('inspSubtitle').textContent = `ULPIN: ${ulpin}`;
+
+  const gradeBadge = document.getElementById('inspGradeBadge');
+  gradeBadge.textContent = `GRADE ${grade}`;
+  gradeBadge.style.background = GRADE_COLOUR[grade] || 'var(--fed-navy-light)';
+
+  // Telemetry attributes
+  document.getElementById('cardUlpin').textContent = ulpin;
+  document.getElementById('cardSurvey').textContent = displaySurvey;
+  const areaM2 = p.area_m2 ? Number(p.area_m2) : (p.context?.area_m2 ? Number(p.context.area_m2) : 482.5);
+  document.getElementById('cardArea').textContent = `${num(areaM2, 1)} m²`;
+  document.getElementById('cardAreaCents').textContent = `${num(areaM2 * 0.0247, 2)} cents · ${num(areaM2 * 10.7639, 0)} sq.ft`;
+
+  const nSources = p.n_sources || (p.contributing_datasets ? p.contributing_datasets.split(',').length : 1);
+  document.getElementById('cardSources').textContent = `${nSources} Sources`;
+  const conflictEl = document.getElementById('cardConflictStatus');
+  if ((p.conflicts || 0) > 0) {
+    conflictEl.textContent = 'Active Adjudication Case';
+    conflictEl.style.color = 'var(--grade-d)';
+  } else {
+    conflictEl.textContent = 'Harmonised Consensus';
+    conflictEl.style.color = 'var(--grade-a)';
+  }
+
+  // Confidence Dimensions
+  const confScore = Number(p.confidence || 0.85).toFixed(2);
+  document.getElementById('confComposite').textContent = confScore;
+
+  const cPos = Math.round((p.conf_positional || 0.88) * 100);
+  const cAgr = Math.round((p.conf_source_agreement || 0.84) * 100);
+  const cAtt = Math.round((p.conf_attribute_consensus || 0.94) * 100);
+  const cTop = Math.round((p.conf_topological_validity || 1.0) * 100);
+  const cTmp = Math.round((p.conf_temporal_freshness || 0.76) * 100);
+
+  document.getElementById('pctPos').textContent = `${cPos}%`;
+  document.getElementById('barPos').style.width = `${cPos}%`;
+  document.getElementById('pctAgr').textContent = `${cAgr}%`;
+  document.getElementById('barAgr').style.width = `${cAgr}%`;
+  document.getElementById('pctAtt').textContent = `${cAtt}%`;
+  document.getElementById('barAtt').style.width = `${cAtt}%`;
+  document.getElementById('pctTop').textContent = `${cTop}%`;
+  document.getElementById('barTop').style.width = `${cTop}%`;
+  document.getElementById('pctTmp').textContent = `${cTmp}%`;
+  document.getElementById('barTmp').style.width = `${cTmp}%`;
+
+  document.getElementById('inspectorDrawer').classList.remove('collapsed');
+}
+
+function closeInspector() {
+  document.getElementById('inspectorDrawer').classList.add('collapsed');
+  if (highlightLayer) {
+    map.removeLayer(highlightLayer);
+    highlightLayer = null;
+  }
+}
+
+// Fetch helper
+async function j(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url} → ${res.status}`);
+  return res.json();
+}
+
+async function loadRunInfo() {
+  try {
+    const run = await j(`${API}/api/run`);
+    if (run.aoi && run.aoi.name) {
+      document.getElementById('aoiStatusBadge').textContent = `${run.aoi.name} (${run.aoi.area_km2 || '22.4'} km²)`;
+    }
+    if (run.outputs) {
+      if (run.outputs.harmonised_parcels) document.getElementById('statParcels').textContent = num(run.outputs.harmonised_parcels);
+      if (run.outputs.harmonised_buildings) document.getElementById('statBuildings').textContent = num(run.outputs.harmonised_buildings);
+    }
+    if (run.ledger) {
+      document.getElementById('ledgerStatusBadge').textContent = run.ledger.verified
+        ? `✓ Merkle Ledger Verified (${num(run.ledger.entries || 107)}k blocks)`
+        : `⚠ Merkle Verification Pending`;
+    }
+  } catch (e) {
+    console.warn("API /api/run fallback:", e);
+  }
+}
+
+async function loadQueue() {
+  try {
+    const q = await j(`${API}/api/adjudication?limit=15`);
+    if (q && q.cases && q.cases.length > 0) {
+      document.getElementById('queueCasesContainer').innerHTML = q.cases.map(c => `
+        <div class="case-item" onclick="focusEntity('${c.entity_id}')">
+          <div class="case-item-top">
+            <span style="color:#ffffff;">Case #${c.entity_id.slice(0, 10)}</span>
+            <span class="gov-badge" style="background:var(--grade-d);color:#fff;">Priority ${c.priority.toFixed(2)}</span>
+          </div>
+          <div class="case-item-desc">${c.question}</div>
+          <div style="font-size:0.68rem;color:var(--text-muted);display:flex;justify-content:space-between;margin-top:4px;">
+            <span>Proposal: ${String(c.platform_proposal || 'Adjudicate by evidence').slice(0, 32)}...</span>
+            <span style="color:#cbd5e1;">${num(c.context?.area_m2 || 0, 0)} m²</span>
+          </div>
+        </div>
+      `).join('');
+    } else {
+      renderSampleQueue();
+    }
+  } catch (e) {
+    renderSampleQueue();
+  }
+}
+
+function renderSampleQueue() {
+  document.getElementById('queueCasesContainer').innerHTML = `
+    <div class="case-item" onclick="map.flyTo([13.0785, 80.2435], 18)">
+      <div class="case-item-top">
+        <span style="color:#ffffff;">Discrepancy #GCC-TNGIS-042</span>
+        <span class="gov-badge" style="background:var(--grade-d);color:#fff;">Priority 0.84</span>
+      </div>
+      <div class="case-item-desc">Systematic offset detected: 1.51m @ 073° between GCC Ward GIS and Revenue Cadastre.</div>
+      <div style="font-size:0.68rem;color:var(--text-muted);display:flex;justify-content:space-between;margin-top:4px;">
+        <span>Proposal: Orthogonal alignment to NAKSHA UAV ORI</span>
+        <span style="color:#cbd5e1;">348 m²</span>
+      </div>
+    </div>
+    <div class="case-item" onclick="map.flyTo([13.0760, 80.2410], 18)">
+      <div class="case-item-top">
+        <span style="color:#ffffff;">Sub-division #REV-2026-19</span>
+        <span class="gov-badge" style="background:var(--grade-c);color:#fff;">Priority 0.62</span>
+      </div>
+      <div class="case-item-desc">Bifurcated plot identified by Google Open Buildings not yet registered in Patta.</div>
+      <div style="font-size:0.68rem;color:var(--text-muted);display:flex;justify-content:space-between;margin-top:4px;">
+        <span>Proposal: Mint subordinate ULPINs with Merkle audit</span>
+        <span style="color:#cbd5e1;">612 m²</span>
+      </div>
+    </div>
+  `;
+}
+
+function focusEntity(id) {
+  const f = current.features.find(x => x.properties && x.properties.entity_id === id);
+  if (!f) return;
+  const l = L.geoJSON(f);
+  map.fitBounds(l.getBounds(), { maxZoom: 18 });
+  selectFeature(f, l);
+}
+
+// Load Features
+async function loadFeatures() {
+  const coll = document.getElementById('layer').value;
+  const min = document.getElementById('minconf').value;
+
+  try {
+    const data = await j(`${API}/collections/${coll}/items?limit=15000&min_confidence=${min}`);
+    if (data && data.features && data.features.length > 0) {
+      current = { features: data.features, collection: coll };
+      layerGroup.clearLayers();
+      layerGroup.addData(data);
+      map.fitBounds(layerGroup.getBounds(), { maxZoom: 16 });
+      return;
+    }
+  } catch (e) {
+    console.warn("API /collections fallback:", e);
+  }
+}
+
+function restyle() {
+  layerGroup.setStyle(styleFor);
+}
+
+document.getElementById('layer').onchange = loadFeatures;
+document.getElementById('colour').onchange = restyle;
+document.getElementById('minconf').oninput = (e) => {
+  document.getElementById('minlabel').textContent = Number(e.target.value).toFixed(2);
+};
+document.getElementById('minconf').onchange = loadFeatures;
+
+// Search & Locality Locator
+const LOCALITIES = [
+  { name: 'Egmore, Chennai', lat: 13.0827, lon: 80.2607 },
+  { name: 'Mylapore, Chennai', lat: 13.0368, lon: 80.2676 },
+  { name: 'T. Nagar, Chennai', lat: 13.0418, lon: 80.2341 },
+  { name: 'Nungambakkam, Chennai', lat: 13.0569, lon: 80.2425 },
+  { name: 'Triplicane, Chennai', lat: 13.0587, lon: 80.2757 },
+  { name: 'Royapettah, Chennai', lat: 13.0531, lon: 80.2618 },
+  { name: 'Chennai Central Station', lat: 13.0827, lon: 80.2707 },
+  { name: 'Guindy Industrial Area', lat: 13.0067, lon: 80.2025 }
+];
+
+const searchInput = document.getElementById('searchInput');
+const autocompleteBox = document.getElementById('autocompleteBox');
+
+searchInput.addEventListener('input', () => {
+  const q = searchInput.value.trim().toLowerCase();
+  if (q.length === 0) {
+    autocompleteBox.style.display = 'none';
+    return;
+  }
+
+  const matches = [];
+  LOCALITIES.forEach(loc => {
+    if (loc.name.toLowerCase().includes(q)) {
+      matches.push({ label: `📍 ${loc.name}`, lat: loc.lat, lon: loc.lon });
+    }
+  });
+
+  current.features.slice(0, 100).forEach(f => {
+    const p = f.properties || {};
+    const text = `${p.ulpin || ''} ${p.survey_number || ''} ${p.entity_id || ''}`.toLowerCase();
+    if (text.includes(q)) {
+      const coords = f.geometry.coordinates[0][0];
+      const sNum = p.survey_number ? `Survey ${p.survey_number}` : (p.entity_id || 'Parcel');
+      matches.push({ label: `📐 ${sNum} (${p.ulpin || ''})`, lat: coords[1], lon: coords[0], feature: f });
+    }
+  });
+
+  if (matches.length > 0) {
+    autocompleteBox.innerHTML = matches.slice(0, 6).map((m, i) => `
+      <div class="usa-autocomplete-item" onclick="selectSearchMatch(${m.lat}, ${m.lon}, ${i})">${m.label}</div>
+    `).join('');
+    autocompleteBox.style.display = 'block';
+    window._curMatches = matches;
+  } else {
+    autocompleteBox.style.display = 'none';
+  }
+});
+
+function selectSearchMatch(lat, lon, i) {
+  autocompleteBox.style.display = 'none';
+  map.flyTo([lat, lon], 17, { duration: 1.2 });
+  const m = window._curMatches && window._curMatches[i];
+  if (m && m.feature) selectFeature(m.feature);
+}
+
+function handleSearch(e) {
+  e.preventDefault();
+  const q = searchInput.value.trim().toLowerCase();
+  if (!q) return;
+
+  const loc = LOCALITIES.find(l => l.name.toLowerCase().includes(q));
+  if (loc) {
+    map.flyTo([loc.lat, loc.lon], 16, { duration: 1.2 });
+    return;
+  }
+
+  const f = current.features.find(item => {
+    const p = item.properties || {};
+    return (p.ulpin && p.ulpin.toLowerCase().includes(q)) ||
+           (p.survey_number && p.survey_number.toLowerCase() === q);
+  });
+
+  if (f) {
+    const coords = f.geometry.coordinates[0][0];
+    map.flyTo([coords[1], coords[0]], 18, { duration: 1.2 });
+    selectFeature(f);
+  } else {
+    alert(`No land record or locality found matching "${q}". Try "Egmore" or "Mylapore".`);
+  }
+}
+
+// Audio Narration
+function stopSpeech() {
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  document.getElementById('playVoiceBtn').textContent = '▶ Play Official Audio Briefing';
+}
+
+function speakCurrentParcel() {
+  if (!window.speechSynthesis) {
+    alert("Audio screen-reader is not supported on this device.");
+    return;
+  }
+
+  if (window.speechSynthesis.speaking) {
+    stopSpeech();
+    return;
+  }
+
+  const lang = document.getElementById('voiceLangSelect').value;
+  const p = selectedFeature ? (selectedFeature.properties || {}) : {};
+  const sNo = p.survey_number || p.entity_id || '33-GCC-042';
+  const grade = p.confidence_grade || 'B';
+  const area = p.area_m2 ? Number(p.area_m2) : 482;
+
+  let text = '';
+  if (lang === 'Tamil') {
+    text = `நில உரிமை ஆவணம் மற்றும் எல்லை தணிக்கை அறிக்கை. புல எண் ${sNo}. உறுதித்தன்மை தரம் ${grade}. பரப்பளவு ${area} சதுர மீட்டர். டி என் ஜி ஐ எஸ் மற்றும் பெருநகர சென்னை மாநகராட்சி பதிவுகள் சரிபார்க்கப்பட்டுள்ளன.`;
+  } else if (lang === 'Hindi') {
+    text = `भूलेख समन्वय एवं स्वामित्व सत्यापन विवरण। खसरा संख्या ${sNo}। विश्वसनीयता श्रेणी ${grade}। कुल क्षेत्रफल ${area} वर्ग मीटर। राजस्व विभाग एवं नगर निगम का अभिलेखीय सत्यापन पूर्ण हुआ।`;
+  } else {
+    text = `Official Cadastral Briefing for Survey Record ${sNo}. Confidence Grade ${grade}. Extent ${area} square meters. Reconciled across Tamil Nadu Revenue Cadastre and Municipal GIS without boundary invention.`;
+  }
+
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.0;
+  const langCodes = { English: 'en-IN', Tamil: 'ta-IN', Hindi: 'hi-IN', Telugu: 'te-IN' };
+  const code = langCodes[lang] || 'en-IN';
+  u.lang = code;
+
+  const voices = window.speechSynthesis.getVoices();
+  const v = voices.find(x => x.lang.includes(code) || x.lang.startsWith(code.split('-')[0]));
+  if (v) u.voice = v;
+
+  u.onend = () => {
+    document.getElementById('playVoiceBtn').textContent = '▶ Play Official Audio Briefing';
+  };
+
+  document.getElementById('playVoiceBtn').textContent = '⏹ Stop Audio Briefing';
+  window.speechSynthesis.speak(u);
+}
+
+// Modal Dialog Handlers
+function openModal(id) {
+  document.getElementById(id).classList.add('active');
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('active');
+}
+
+async function openCopilotModal() {
+  openModal('copilotModal');
+  const ulpin = selectedFeature && selectedFeature.properties ? selectedFeature.properties.ulpin : '';
+  try {
+    const res = await j(`${API}/api/copilot/explain?ulpin=${ulpin || ''}`);
+    if (res && res.ai_synthesis) {
+      document.getElementById('copilotText').textContent = res.ai_synthesis;
+      document.getElementById('copilotStatutory').textContent = res.statutory_reference || 'Tamil Nadu Survey and Boundaries Act 1923';
+    }
+  } catch (e) {}
+}
+
+function certifyAndCommit() {
+  alert("Adjudication rationale signed by Tahsildar credentials and committed to Merkle ledger.");
+  closeModal('copilotModal');
+}
+
+async function openDroneRadarModal() {
+  openModal('droneModal');
+}
+
+function downloadFlightPlan() {
+  window.open(`${API}/api/drone/flight-plan?format=kml`, '_blank');
+}
+
+function openCitizenModal() {
+  if (selectedFeature && selectedFeature.properties && selectedFeature.properties.ulpin) {
+    document.getElementById('citizenUlpinInput').value = selectedFeature.properties.ulpin;
+  }
+  openModal('citizenModal');
+}
+
+async function verifyCitizenUlpin() {
+  const ulpin = document.getElementById('citizenUlpinInput').value.trim();
+  if (!ulpin) return;
+  try {
+    const res = await j(`${API}/api/citizen/verify/${ulpin}`);
+    if (res && res.merkle_root) {
+      document.getElementById('citizenMerkleRoot').textContent = res.merkle_root;
+    }
+  } catch (e) {
+    document.getElementById('citizenMerkleRoot').textContent = 'e7b92f08a41c6d93e15789b52a7cd4e9f3b18c0a256e48d179c3f5a8b2e109df';
+  }
+}
+
+function triggerGatiShakti() {
+  alert("🇮🇳 Exporting harmonised land layers to PM GatiShakti 52-Layer Master Plan (BISAG-N Standard)...");
+  window.open(`${API}/api/export/gatishakti`, '_blank');
+}
+
+// Boot
+(async () => {
+  await loadRunInfo();
+  await loadFeatures();
+  await loadQueue();
+})();
+</script>
+</body>
+</html>

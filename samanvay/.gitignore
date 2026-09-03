@@ -1,0 +1,10 @@
+data/raw/
+data/aoi/
+out/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.ckpt/
+deck/*.pdf
+deck/slide-*.jpg
+*.tar.gz
