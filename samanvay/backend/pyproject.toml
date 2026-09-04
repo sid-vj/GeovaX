@@ -30,10 +30,16 @@ dependencies = [
   "sqlalchemy>=2.0",
   "psycopg2-binary>=2.9",
   "networkx>=3.2",
+  "redis>=5.0",
+  "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.3", "mypy>=1.9"]
+# Optional real Segment Anything inference path for geoai/sam_extractor.py — only activates
+# when both this extra is installed AND a real checkpoint path is configured; the default
+# classical-CV extraction path (raster/terrain.py + geoai/footprints.py) needs neither.
+sam = ["torch>=2.2", "segment-anything>=1.0"]
 
 [project.scripts]
 samanvay = "samanvay.cli:main"

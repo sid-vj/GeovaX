@@ -27,12 +27,13 @@ much to trust a boundary will treat all boundaries alike, which defeats the enti
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
@@ -40,9 +41,11 @@ from ..core.ledger import ProvenanceLedger
 from ..attributes.canonical import PARCEL_SCHEMA, redact_pii
 from ..cadastre.fmb import generate_fmb, to_collabland_xml, to_fmb_svg
 from ..analytics.litigation import build_litigation_hotspots, calculate_litigation_risk
-from .auth import Role, UserClaims, get_current_user, require_roles
-from .services import cache_service, kafka_bus, opensearch_service
+from .auth import Role, UserClaims, USER_DIRECTORY, get_current_user, require_roles, sign_token
+from .services import KafkaEventBus, cache_service, kafka_bus, opensearch_service
 from ..geoai.sam_extractor import SAMFeatureExtractor
+
+logger = logging.getLogger(__name__)
 
 API_VERSION = "1.0.0"
 TITLE = "GEOVAX — harmonised urban land records"
@@ -514,7 +517,14 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
     app.add_middleware(
         CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
     )
-    store = FeatureStore(out_dir=out_dir)
+    from ..db.store import PostgisStore, get_engine
+
+    _db_engine = get_engine()
+    store: FeatureStore | PostgisStore = (
+        PostgisStore(_db_engine, out_dir=out_dir) if _db_engine is not None
+        else FeatureStore(out_dir=out_dir)
+    )
+    logger.info("API backing store: %s", type(store).__name__)
     app.state.store = store
 
     # ==================================================================================
@@ -726,6 +736,39 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
                                    key=lambda kv: -kv[1]["parcels"])[:60]),
         }
 
+    @app.post("/api/auth/login", tags=["auth"])
+    async def login(request: Request) -> dict[str, Any]:
+        """Issue a signed, expiring access token for a seeded demo persona.
+
+        There is no real identity provider or credential store behind this reference
+        deployment (see ``auth.py`` module docstring) — ``login_id`` simply selects which of
+        the fixed demo personas to issue a token for. What is real: the returned token is
+        HMAC-SHA256 signed and time-limited, and every subsequent request is rejected unless
+        it presents a token that verifies against the server's signing secret. This replaces
+        the previous behaviour of accepting a literal ``"token-superadmin"``-style string as
+        if it were a credential.
+        """
+        body = await request.json()
+        login_id = str(body.get("login_id", "")).strip()
+        persona = USER_DIRECTORY.get(login_id)
+        if persona is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Unknown login_id. Known demo personas: {sorted(USER_DIRECTORY)}",
+            )
+        token = sign_token(persona.to_token_claims())
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "expires_in": 8 * 3600,
+            "user": {
+                "user_id": persona.user_id,
+                "username": persona.username,
+                "roles": [r.value for r in persona.roles],
+                "allowed_wards": persona.allowed_wards,
+            },
+        }
+
     @app.get("/api/auth/me", tags=["auth"])
     def get_my_identity(user: UserClaims = Depends(get_current_user)) -> dict[str, Any]:
         """Inspect current authenticated user claims, Keycloak roles, and ABAC spatial permissions."""
@@ -842,12 +885,19 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
         request: Request,
         user: UserClaims = Depends(require_roles(Role.TAHSILDAR, Role.SUPER_ADMIN)),
     ) -> dict[str, Any]:
-        """Resolve conflict, write immutable audit record to provenance ledger, and emit Kafka event."""
+        """Resolve conflict, write immutable audit record to provenance ledger, emit Kafka
+        event, and — when backed by PostGIS — update the real adjudication_case/resolution
+        rows so the decision is durable, not just logged."""
         body = await request.json()
         case_id = body.get("case_id")
         decision = body.get("decision", "ACCEPTED")
-        ulpin = body.get("ulpin", "33GCCZKH6KJM33")
+        ulpin = body.get("ulpin")
         rationale = body.get("rationale", "Statutory alignment verified by Revenue Officer.")
+        if not case_id or not ulpin:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Both 'case_id' and 'ulpin' are required.",
+            )
 
         # 1. Write immutable provenance entry
         store.ledger.append(
@@ -856,6 +906,32 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
             payload={"case_id": case_id, "decision": decision, "rationale": rationale},
             actor=f"{user.username} ({user.roles[0].value})",
         )
+
+        # 1b. Durable write to the real adjudication_case/resolution tables when DB-backed.
+        db_engine = getattr(store, "engine", None)
+        if db_engine is not None:
+            from sqlalchemy import text as _sql
+            with db_engine.begin() as conn:
+                updated = conn.execute(_sql("""
+                    UPDATE adjudication_case
+                    SET state = 'decided', decided_value = :decision,
+                        decided_by = :decided_by, decided_at = now(),
+                        decision_note = :rationale
+                    WHERE case_id = :case_id
+                    RETURNING entity_id, property_path, conflict_id
+                """), {"decision": decision, "decided_by": user.username,
+                       "rationale": rationale, "case_id": case_id}).first()
+                if updated is not None:
+                    conn.execute(_sql("""
+                        INSERT INTO resolution (conflict_id, entity_id, property_path,
+                                                chosen_value, strategy, belief, plausibility,
+                                                state, rationale, resolved_by)
+                        VALUES (:conflict_id, :entity_id, :property_path, :decision,
+                                'human_adjudication', 1.0, 1.0, 'decided', :rationale,
+                                :resolved_by)
+                    """), {"conflict_id": updated.conflict_id, "entity_id": updated.entity_id,
+                           "property_path": updated.property_path, "decision": decision,
+                           "rationale": rationale, "resolved_by": user.username})
 
         # 2. Emit real-time Kafka event to downstream consumers
         kafka_bus.emit(
@@ -884,18 +960,38 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
 
     @app.post("/api/ai/extract-footprints", tags=["geoai"])
     async def ai_extract_footprints(request: Request) -> dict[str, Any]:
-        """GeoAI extraction using PyTorch and Segment Anything Model (SAM)."""
+        """GeoAI building-footprint extraction: real classical DSM structure extraction by
+        default (raster/terrain.py + geoai/footprints.py), or real Segment Anything
+        inference if SAMANVAY_SAM_CHECKPOINT + the [sam] extras are actually installed
+        (geoai/sam_extractor.py). The 'model' field below reports whichever genuinely ran —
+        never a claimed model that didn't execute.
+        """
+        import glob
+
         body = await request.json()
         bbox = body.get("bbox", [80.23, 13.06, 80.25, 13.08])
+        raster_path = body.get("raster_path")
+        if not raster_path:
+            candidates = sorted(glob.glob(os.path.join(store.out_dir, "raster", "*_dsm.tif")))
+            raster_path = candidates[0] if candidates else ""
+
         extractor = SAMFeatureExtractor()
-        results = extractor.extract_from_raster(
-            raster_path="data/raw/uavarena/odm-3.0.0.cog.tif",
-            bbox=tuple(bbox),
-        )
+        results = extractor.extract_from_raster(raster_path=raster_path, bbox=tuple(bbox))
+        method = results[0].method if results else ("classical_terrain_cv" if not extractor.sam_active else "none")
+        model_label = {
+            "classical_terrain_cv": "ClassicalCV-MorphologicalGroundFilter+FootprintRegularisation",
+            "segment_anything": f"SegmentAnything-{extractor.model_type}",
+            "none": "none",
+        }[method]
+
         return {
-            "model": "SegmentAnything-ViT-H",
-            "framework": "PyTorch 2.x",
+            "model": model_label,
+            "raster_used": raster_path or None,
             "extracted_count": len(results),
+            "note": (None if raster_path else
+                     "No DSM raster found for this AOI (expected "
+                     f"{os.path.join(store.out_dir, 'raster', '*_dsm.tif')}); "
+                     "nothing was extracted."),
             "features": [
                 {
                     "type": "Feature",
@@ -905,6 +1001,7 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
                         "area_m2": r.area_m2,
                         "height_m": r.height_m,
                         "feature_class": r.feature_class,
+                        "method": r.method,
                     }
                 }
                 for r in results
@@ -990,15 +1087,24 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
     @app.get("/api/copilot/explain", tags=["platform"])
     def copilot_explain(ulpin: str | None = None, case_id: str | None = None,
                         lang: str = "en") -> dict[str, Any]:
-        """Tahsildar Co-Pilot: plain-language explanation of evidentiary conflicts."""
+        """Tahsildar Co-Pilot: plain-language, template-based explanation of an evidentiary
+        conflict actually present in the adjudication queue.
+
+        This is a deterministic explainer over real queue data, not an LLM call (none is
+        configured in this environment) — it only ever describes a case that genuinely exists.
+        """
         briefs = store.queue()
         matched = next((b for b in briefs if b.get("case_id") == case_id), None)
         if not matched and ulpin:
-            matched = {"case_id": f"CASE-{ulpin[:8]}", "property": "geometry",
-                       "question": f"Discrepancy on parcel {ulpin}", "why": "Dempster-Shafer evidential conflict"}
-        matched = matched or {"case_id": "CASE-DEMO", "property": "geometry",
-                              "question": "Spatial boundary conflict between cadastral and drone layers",
-                              "why": "Systematic offset of 1.51m @ 073° detected"}
+            matched = next(
+                (b for b in briefs if str(b.get("ulpin") or b.get("entity_id") or "") == ulpin),
+                None,
+            )
+        if not matched:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No matching adjudication case found for the given case_id/ulpin.",
+            )
         return {
             "case": matched,
             "lang": lang,
@@ -1045,19 +1151,33 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
 
     @app.get("/api/citizen/verify/{ulpin}", tags=["platform"])
     def citizen_verify(ulpin: str) -> dict[str, Any]:
-        """Bhu-Darpan: citizen cryptographic Merkle inclusion verification."""
+        """Bhu-Darpan: citizen cryptographic Merkle inclusion verification.
+
+        Uses the real ``ProvenanceLedger.inclusion_proof``/``verify_inclusion`` implementation
+        (core/ledger.py) against this ULPIN's actual most recent ledger entry — no proof is
+        returned for a ULPIN that was never written to the ledger.
+        """
+        entries = store.ledger.history(ulpin)
+        if not entries:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No provenance ledger entry exists for ULPIN {ulpin}.",
+            )
+        latest = entries[-1]
         root = store.ledger.merkle_root()
+        path = store.ledger.inclusion_proof(latest.index)
+        verified = ProvenanceLedger.verify_inclusion(latest.entry_hash, path, root)
         return {
             "ulpin": ulpin,
-            "bhu_aadhaar_valid": True,
             "merkle_root": root,
             "merkle_inclusion_proof": {
-                "leaf_hash": "9f83ac02d7e0129b8cfa438810294b49",
-                "audit_path": ["e4d29188a19280ff", "07b812ac981ef412"],
-                "gazette_anchored": True
+                "leaf_hash": latest.entry_hash,
+                "leaf_index": latest.index,
+                "audit_path": [{"side": side, "hash": h} for side, h in path],
+                "verified": verified,
             },
-            "status": "TAMPER_EVIDENT_VERIFIED",
-            "statutory_note": "Certified digital land record extract under DILRMP & DPDP Act 2023."
+            "status": "TAMPER_EVIDENT_VERIFIED" if verified else "VERIFICATION_FAILED",
+            "statutory_note": "Certified digital land record extract under DILRMP & DPDP Act 2023.",
         }
 
     @app.get("/api/export/gatishakti", tags=["platform"])
@@ -1094,12 +1214,13 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
             None
         )
         if not matched:
-            coords = [[80.241, 13.061], [80.243, 13.061], [80.243, 13.063], [80.241, 13.063], [80.241, 13.061]]
-            props = {"ulpin": ulpin, "survey_number": "42", "subdivision": "1", "village": "Kilpauk", "taluk": "Egmore"}
-        else:
-            geom = matched.get("geometry", {})
-            coords = geom.get("coordinates", [[]])[0]
-            props = matched.get("properties", {})
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No harmonised parcel found for ULPIN {ulpin}.",
+            )
+        geom = matched.get("geometry", {})
+        coords = geom.get("coordinates", [[]])[0]
+        props = matched.get("properties", {})
 
         record = generate_fmb(coords, metadata=props)
 
@@ -1145,7 +1266,14 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
 
     @app.get("/api/litigation/ward/{ward_name}", tags=["platform"])
     def get_ward_litigation_cases(ward_name: str) -> dict[str, Any]:
-        """Fetch all active e-Courts civil suits & lis pendens disputes across an entire ward or village."""
+        """Fetch all active e-Courts civil suits & lis pendens disputes across an entire ward
+        or village, via the real ``ECourtsConnector``/``RegistrationConnector``
+        (analytics/litigation.py). No credentials/public bulk API exist for e-Courts/NJDG or
+        a state Registration Department in this environment, so ``cases`` is honestly empty
+        (``data_source: "not_configured"``) unless ``ECOURTS_API_URL``/``REGISTRATION_API_URL``
+        are configured — never a fabricated docket."""
+        from ..analytics.litigation import ECourtsConnector, RegistrationConnector
+
         parcels = store.collections.get("parcels", [])
         w_lower = ward_name.lower()
         matched_parcels = [
@@ -1153,81 +1281,31 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
             if w_lower == "all" or w_lower in str(p.get("properties", {}).get("village_name", "")).lower()
             or w_lower in str(p.get("properties", {}).get("ward", "")).lower()
         ]
-        
+
+        court = ECourtsConnector()
+        reg = RegistrationConnector()
         all_cases = []
-        for i, p in enumerate(matched_parcels):
+        for p in matched_parcels:
             props = p.get("properties", {})
             s_num = f"{props.get('survey_number', '0')}/{props.get('subdivision', '1')}"
-            street = props.get("street_name", "Main Road")
             village = props.get("village_name", ward_name)
             ulpin = props.get("ulpin", "")
-            grade = props.get("confidence_grade", "C")
-            
-            # Select realistic subset of parcels with genuine dispute scenarios (approx 20-30% of parcels)
-            h_val = abs(hash(f"{ulpin}_{s_num}"))
-            if h_val % 4 == 0 or grade in ("D", "E"):
-                case_types = [
-                    ("Original Suit (O.S.)", "Declaration of Title & Permanent Injunction", "Ad-Interim Injunction on Mutation Granted"),
-                    ("Original Suit (O.S.)", "Suit for Partition & Separate Possession", "Stay on Alienation & Patta Transfer"),
-                    ("Writ Petition (W.P.)", "Encroachment Injunction against Revenue Dept", "Interim Direction against Eviction"),
-                    ("Civil Misc Appeal (CMA)", "Boundary Demarcation Challenge under TN Survey Act", "Pending Survey Commission Report"),
-                    ("Execution Petition (E.P.)", "Decree for Possession & Demarcation", "Warrant of Delivery Issued"),
-                ]
-                ctype_tuple = case_types[h_val % len(case_types)]
-                case_prefix, suit_name, status_text = ctype_tuple
-                case_year = 2022 + (h_val % 3)
-                case_no = f"{case_prefix} {(h_val % 380) + 12}/{case_year}"
-                
-                court_names = [
-                    "Subordinate Judge Court, Tambaram",
-                    "District Munsif Court, Tambaram",
-                    "Principal District & Sessions Court, Chengalpattu",
-                    "High Court of Judicature at Madras",
-                    "City Civil Court, Chennai",
-                ]
-                court_name = court_names[h_val % len(court_names)]
-                bench_name = f"Hon'ble Bench of {court_name.split(',')[0]}"
-                
-                claimants = [
-                    "A. Munusamy & 2 Ors.",
-                    "K. Ranganathan & Legal Heirs",
-                    "S. Vijayalakshmi & S. Parthasarathy",
-                    "M/s Southern Prime Real Estate Developers",
-                    "E. Shanmugam (Power Agent)",
-                    "D. Govindaraj & 4 Ors.",
-                ]
-                claimant = claimants[h_val % len(claimants)]
-                respondent = f"Tahsildar ({props.get('taluk_name', 'Tambaram')}) & Sub-Registrar"
-                
-                interim_decree = (
-                    f"Ad-Interim Injunction granted by {court_name} in {case_no} restraining "
-                    f"the Revenue Department and Registration Authority from issuing Patta/Chitta or registering any deed of transfer "
-                    f"in respect of Survey No. {s_num}, {village} until final disposal."
-                )
 
+            cases = court.fetch_cases_by_survey(village, str(props.get("survey_number", "0")))
+            ec_flags = reg.fetch_ec_flags(village, str(props.get("survey_number", "0")))
+            for c in cases:
                 all_cases.append({
-                    "cnr": f"TNTB01-{(h_val % 89999) + 10000:05d}-{case_year}",
-                    "case_number": case_no,
-                    "suit_type": suit_name,
-                    "court_name": court_name,
-                    "bench": bench_name,
-                    "parties": f"{claimant} vs. {respondent}",
-                    "petitioner": claimant,
-                    "respondent": respondent,
-                    "status": status_text,
-                    "filing_date": f"{(h_val % 28) + 1:02d}-{(h_val % 12) + 1:02d}-{case_year}",
-                    "next_hearing_date": f"{(h_val % 28) + 1:02d}-09-2026",
-                    "interim_decree": interim_decree,
+                    "cnr": c.cnr_number,
+                    "case_type": c.case_type,
+                    "court_name": c.court_name,
+                    "petitioner": c.petitioner,
+                    "respondent": c.respondent,
+                    "status": c.status,
+                    "year": c.year,
                     "ulpin": ulpin,
                     "survey_number": s_num,
-                    "street_name": street,
                     "village_name": village,
-                    "risk_tier": "CRITICAL" if "Injunction" in status_text or "Stay" in status_text else "HIGH",
-                    "ec_flags": [
-                        f"Lis Pendens Registered at SRO under Sec 52 TP Act (Doc Ref: LP-{case_year}/{(h_val % 500) + 1})",
-                        f"Attachment Notice pending on Survey {s_num}"
-                    ],
-                    "recommended_action": "Block automated patta mutation; Flag ULPIN on Bhu-Aadhaar ledger; Issue notice to Tahsildar.",
+                    "ec_flags": ec_flags,
                 })
 
         return {
@@ -1235,6 +1313,8 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
             "total_parcels_in_ward": len(matched_parcels),
             "total_active_cases": len(all_cases),
             "cases": all_cases,
+            "court_data_source": court.data_source,
+            "ec_data_source": reg.data_source,
         }
 
     @app.get("/api/litigation/hotspots", tags=["platform"])
@@ -1251,8 +1331,12 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
             (p for p in parcels if p.get("properties", {}).get("ulpin") == ulpin or p.get("id") == ulpin),
             None
         )
-        p = matched or {"properties": {"ulpin": ulpin, "survey_number": "108", "subdivision": "2"}}
-        rec = calculate_litigation_risk(p)
+        if not matched:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No harmonised parcel found for ULPIN {ulpin}.",
+            )
+        rec = calculate_litigation_risk(matched)
         return {
             "ulpin": rec.ulpin,
             "survey_number": f"{rec.survey_number}/{rec.subdivision}",
@@ -1266,31 +1350,80 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
             ],
             "ec_dispute_flags": rec.ec_dispute_flags,
             "risk_drivers": rec.risk_drivers,
-            "recommended_action": rec.recommended_action
+            "recommended_action": rec.recommended_action,
+            "court_data_source": rec.court_data_source,
+            "ec_data_source": rec.ec_data_source,
         }
     @app.get("/api/analytics/encroachment", tags=["analytics"])
     def get_encroachment_flags() -> dict[str, Any]:
-        """Simulate Bi-Temporal Change Detection & Encroachment Flagging via Siamese Network on Government Land."""
+        """Real geometric encroachment detection: harmonised buildings intersecting a
+        public/poramboke land reference layer, via the already-real
+        ``ChangeDetector.encroachment_evidence`` (change/vector_change.py).
+
+        If no public-land reference layer is configured for this AOI, this returns a real,
+        honestly-empty FeatureCollection explaining why rather than a fabricated finding —
+        there is nothing to detect encroachment *against* without one.
+        """
+        from shapely.geometry import shape as _shapely_shape
+        from ..change.vector_change import ChangeDetector
+
+        public_land_path = os.path.join(store.out_dir, "public_land.geojson")
+        if not os.path.exists(public_land_path):
+            return {
+                "type": "FeatureCollection",
+                "metadata": {
+                    "note": ("No public-land reference layer is configured for this AOI "
+                             f"(expected {public_land_path}). Encroachment detection compares "
+                             "harmonised buildings against a declared public/poramboke land "
+                             "layer; without one, no finding can be produced."),
+                },
+                "features": [],
+            }
+
+        with open(public_land_path, encoding="utf-8") as fh:
+            public_land_fc = json.load(fh)
+        public_land = {
+            (f.get("properties", {}).get("id") or f.get("id") or str(i)): _shapely_shape(f["geometry"])
+            for i, f in enumerate(public_land_fc.get("features", []))
+            if f.get("geometry")
+        }
+
+        detector = ChangeDetector()
+        features = []
+        for b in store.collections.get("buildings", []):
+            geom = b.get("geometry")
+            if not geom:
+                continue
+            try:
+                bgeom = _shapely_shape(geom)
+            except Exception:  # noqa: BLE001
+                continue
+            evidence = detector.encroachment_evidence(bgeom, public_land)
+            if evidence is None:
+                continue
+            confidence, note = evidence
+            props = b.get("properties", {})
+            features.append({
+                "type": "Feature",
+                "geometry": geom,
+                "properties": {
+                    "id": props.get("entity_id") or props.get("ulpin") or b.get("id"),
+                    "type": "possible_encroachment",
+                    "confidence_score": round(confidence, 3),
+                    "area_m2": round(bgeom.area, 1),
+                    "evidence": note,
+                    "recommended_action": "Verification required by revenue officer before any notice is issued.",
+                },
+            })
+
         return {
             "type": "FeatureCollection",
-            "features": [
-                {
-                    "type": "Feature",
-                    "geometry": {
-                        "type": "Polygon",
-                        "coordinates": [[[80.071, 12.911], [80.072, 12.911], [80.072, 12.912], [80.071, 12.912], [80.071, 12.911]]]
-                    },
-                    "properties": {
-                        "id": "ENC-001",
-                        "type": "unauthorized_construction",
-                        "confidence_score": 0.94,
-                        "base_land_type": "Government Reserve / Eri Catchment",
-                        "detected_change": "New structure built between 2023-01 and 2024-03",
-                        "area_m2": 450,
-                        "recommended_action": "Issue Eviction Notice under Land Encroachment Act"
-                    }
-                }
-            ]
+            "metadata": {
+                "public_land_reference": public_land_path,
+                "buildings_evaluated": len(store.collections.get("buildings", [])),
+                "flagged_count": len(features),
+            },
+            "features": features,
         }
 
     @app.get("/health", tags=["platform"])

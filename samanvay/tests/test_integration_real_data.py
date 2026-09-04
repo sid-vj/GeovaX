@@ -110,19 +110,29 @@ def test_real_gcc_schema_maps_without_configuration():
 
 
 @needs_corpus
-def test_real_extraction_carries_model_confidence_and_height():
-    """Google Open Buildings is the PS's 'AI-generated feature extraction output'."""
+def test_real_extraction_carries_model_confidence_and_plausible_area():
+    """Google Open Buildings is the PS's 'AI-generated feature extraction output'.
+
+    Verified against the real, publicly-fetchable V3 distribution (the per-S2-cell gzipped
+    CSVs at storage.googleapis.com/open-buildings-data, columns ``latitude,longitude,
+    area_in_meters,confidence,geometry,full_plus_code``): this format does not carry a
+    height field at all — that exists only in a separate Earth Engine-derived product this
+    environment has no credentials for. A prior version of this test asserted >95% height
+    coverage against a format that was never actually fetched; that assumption was
+    unverified against the real data and is corrected here rather than propped up with a
+    fabricated height value.
+    """
     conn = GeoJsonLinesConnector(
         _dataset("GOB", SourceType.AI_EXTRACTION, 1.8), FeatureClass.BUILDING)
     feats = list(conn.read(os.path.join(AOI_DIR, "buildings_gob.geojsonl"),
                            bbox=TILE, limit=500))
     assert feats
     with_conf = [f for f in feats if f.properties.get("confidence") is not None]
-    with_height = [f for f in feats if f.properties.get("height_m") is not None]
+    with_area = [f for f in feats if f.properties.get("area_in_meters") is not None]
     assert len(with_conf) / len(feats) > 0.95
-    assert len(with_height) / len(feats) > 0.95
-    heights = [float(f.properties["height_m"]) for f in with_height]
-    assert 1.0 < (sum(heights) / len(heights)) < 30.0, "implausible mean building height"
+    assert len(with_area) / len(feats) > 0.95
+    areas = [float(f.properties["area_in_meters"]) for f in with_area]
+    assert 5.0 < (sum(areas) / len(areas)) < 500.0, "implausible mean building footprint area"
 
 
 @needs_corpus

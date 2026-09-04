@@ -45,6 +45,8 @@ AUTHORITIES: dict[str, Authority] = {
     "CMWSSB": Authority("CMWSSB", "Chennai Metropolitan Water Supply and Sewerage Board", "parastatal"),
     "NCSCM": Authority("NCSCM", "National Centre for Sustainable Coastal Management", "institutional"),
     "ODM": Authority("ODM", "OpenDroneMap public survey corpus", "institutional"),
+    "GOBI": Authority("GOBI", "Google Research (Open Buildings)", "institutional"),
+    "MSFT": Authority("MSFT", "Microsoft (Bing Maps AI, Global ML Building Footprints)", "institutional"),
 }
 
 

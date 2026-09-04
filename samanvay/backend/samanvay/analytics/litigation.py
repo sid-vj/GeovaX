@@ -6,12 +6,25 @@ judicial and land registry feeds:
 2. State Registration Department (e.g., TN STAR 2.0) Encumbrance Certificate (EC) court stays.
 3. Computes a multi-factor Litigation Risk Index [0.0 - 1.0] and categorises parcels into Risk Tiers.
 4. Emits OGC-compliant GeoJSON FeatureCollections and cluster metrics for District Collectors.
+
+On the two external feeds: this environment has no credentials or documented public bulk API
+for either e-Courts/NJDG or a state Registration Department's EC system (both are per-case /
+per-parcel citizen lookup services, not open data). ``ECourtsConnector`` and
+``RegistrationConnector`` therefore make a real, correctly-shaped HTTP request against a
+configurable endpoint when one is set, and otherwise return an explicit, empty,
+``data_source="not_configured"`` result — never a plausible-looking fabricated case. The risk
+math in ``calculate_litigation_risk`` is real and untouched; only its two external inputs
+changed from `hash(key) % 100` simulation to this honest pattern.
 """
 from __future__ import annotations
 
+import logging
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -40,60 +53,78 @@ class LitigationAssessment:
     risk_tier: str = "LOW"  # 'CRITICAL', 'HIGH', 'MODERATE', 'LOW'
     risk_drivers: list[str] = field(default_factory=list)
     recommended_action: str = ""
+    court_data_source: str = "not_configured"
+    """"seed" (test fixture), "live" (a real ECOURTS_API_URL was queried), or
+    "not_configured" (no external e-Courts source available — court_cases is honestly
+    empty, not simulated)."""
+    ec_data_source: str = "not_configured"
 
 
 class ECourtsConnector:
-    """Connector for e-Courts Services & National Judicial Data Grid (NJDG)."""
+    """Connector for e-Courts Services & National Judicial Data Grid (NJDG).
 
-    def __init__(self, seed_records: dict[str, list[dict[str, Any]]] | None = None) -> None:
+    No credentials or documented public bulk API exist for this environment. Set
+    ``ECOURTS_API_URL`` to a real endpoint to make this genuinely live; without it, every
+    query honestly returns no cases rather than a fabricated one. ``seed_records`` remains
+    for tests that want to exercise the risk-scoring math against known, explicit inputs —
+    that is real test fixture data, not a claim about e-Courts itself.
+    """
+
+    def __init__(self, seed_records: dict[str, list[dict[str, Any]]] | None = None,
+                 api_url: str | None = None) -> None:
         self._cache = seed_records or {}
+        self.api_url = api_url or os.environ.get("ECOURTS_API_URL")
+        self.data_source = "seed" if seed_records else (
+            "live" if self.api_url else "not_configured")
 
     def fetch_cases_by_survey(self, village: str, survey_number: str) -> list[CourtCase]:
         """Fetch pending civil suits matching survey number and village."""
         key = f"{village.lower()}:{survey_number}"
         if key in self._cache:
             return [CourtCase(**c) for c in self._cache[key]]
-
-        # Deterministic simulation based on survey number hash to mimic real-world distribution:
-        # Roughly 12% of urban survey numbers carry active litigation
-        h = hash(key)
-        cases: list[CourtCase] = []
-        if (h % 100) < 14:
-            case_types = ["Original Suit (Title)", "Permanent Injunction", "Suit for Partition"]
-            ctype = case_types[h % len(case_types)]
-            cases.append(
-                CourtCase(
-                    cnr_number=f"TNCH01-{(abs(h) % 90000) + 10000}-2024",
-                    case_type=ctype,
-                    court_name="City Civil Court, Chennai",
-                    year=2024,
-                    petitioner="Claimant vs Revenue Dept",
-                    respondent="State of TN & Ors",
-                    status="Stay Granted" if (h % 3 == 0) else "Pending",
-                )
-            )
-        return cases
+        if not self.api_url:
+            return []
+        try:
+            import httpx
+            resp = httpx.get(self.api_url, params={"village": village, "survey_number": survey_number},
+                              timeout=10.0)
+            resp.raise_for_status()
+            return [CourtCase(**c) for c in resp.json().get("cases", [])]
+        except Exception as err:  # noqa: BLE001
+            logger.warning("ECourtsConnector: live fetch failed (%s); returning no cases.", err)
+            return []
 
 
 class RegistrationConnector:
-    """Connector for State Registration Department Encumbrance Certificates (EC)."""
+    """Connector for State Registration Department Encumbrance Certificates (EC).
 
-    def __init__(self, seed_flags: dict[str, list[str]] | None = None) -> None:
+    Same honest pattern as ``ECourtsConnector``: set ``REGISTRATION_API_URL`` for a real
+    endpoint; otherwise this reports no flags rather than inventing lis-pendens entries.
+    """
+
+    def __init__(self, seed_flags: dict[str, list[str]] | None = None,
+                 api_url: str | None = None) -> None:
         self._cache = seed_flags or {}
+        self.api_url = api_url or os.environ.get("REGISTRATION_API_URL")
+        self.data_source = "seed" if seed_flags else (
+            "live" if self.api_url else "not_configured")
 
     def fetch_ec_flags(self, village: str, survey_number: str) -> list[str]:
         """Fetch lis pendens, attachment, or dispute flags registered against the parcel."""
         key = f"{village.lower()}:{survey_number}"
         if key in self._cache:
             return self._cache[key]
-
-        h = hash(key)
-        flags: list[str] = []
-        if (h % 100) < 9:
-            flags.append("Lis Pendens Entry: Sub-Court OS/108/2023")
-        if (h % 100) in (7, 13, 21):
-            flags.append("Ad-interim Injunction Restraining Alienation")
-        return flags
+        if not self.api_url:
+            return []
+        try:
+            import httpx
+            resp = httpx.get(self.api_url, params={"village": village, "survey_number": survey_number},
+                              timeout=10.0)
+            resp.raise_for_status()
+            return list(resp.json().get("flags", []))
+        except Exception as err:  # noqa: BLE001
+            logger.warning("RegistrationConnector: live fetch failed (%s); returning no flags.", err)
+            return []
 
 
 def calculate_litigation_risk(
@@ -182,6 +213,8 @@ def calculate_litigation_risk(
         risk_tier=tier,
         risk_drivers=drivers,
         recommended_action=rec,
+        court_data_source=court.data_source,
+        ec_data_source=reg.data_source,
     )
 
 
@@ -220,6 +253,8 @@ def build_litigation_hotspots(
                     "ec_flags": assessment.ec_dispute_flags,
                     "risk_drivers": assessment.risk_drivers,
                     "recommended_action": assessment.recommended_action,
+                    "court_data_source": assessment.court_data_source,
+                    "ec_data_source": assessment.ec_data_source,
                 },
             }
             features.append(feat)
@@ -235,6 +270,15 @@ def build_litigation_hotspots(
             "flagged_hotspots_count": len(features),
             "tier_summary": tier_counts,
             "fusion_model": "Dempster-Shafer K + e-Courts NJDG + Registration Lis Pendens",
+            "court_data_source": court_conn.data_source,
+            "ec_data_source": reg_conn.data_source,
+            "data_source_note": (
+                "'not_configured' means no live e-Courts/NJDG or Registration Department "
+                "API is reachable from this environment; the conflict_mass_k-driven risk "
+                "score is still real, computed from actual harmonisation evidence, but no "
+                "external court/EC records are included until ECOURTS_API_URL / "
+                "REGISTRATION_API_URL are configured."
+            ),
         },
         "features": features,
     }

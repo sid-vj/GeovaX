@@ -4,6 +4,12 @@ export interface UserProfile {
   id: string;
   name: string;
   role: UserRole;
+  /**
+   * NOT a bearer credential. This is the `login_id` sent to POST /api/auth/login to select
+   * which seeded demo persona to issue a real, signed, expiring token for; the actual bearer
+   * token used on subsequent requests is whatever that endpoint returns. See
+   * samanvay/backend/samanvay/api/auth.py module docstring for why there's no real IdP here.
+   */
   token: string;
   wardScope?: string[];
   districtScope?: string;
@@ -244,14 +250,14 @@ export const PRESET_USERS: UserProfile[] = [
     id: "usr-super",
     name: "National Director (NIC)",
     role: "super_admin",
-    token: "token-superadmin",
+    token: "superadmin",
     description: "Pan-India Access (SuperAdmin)",
   },
   {
     id: "usr-corridor",
     name: "Tahsildar (Vandalur – Guindy Corridor & Chennai)",
     role: "tahsildar",
-    token: "token-tahsildar-tambaram",
+    token: "tahsildar-tambaram",
     wardScope: ["Vandalur", "Old Perungalathur", "New Perungalathur", "Mudichur", "Tambaram", "Tambaram Sanatorium", "Chromepet", "Pallavaram", "Hasthinapuram", "Tirusulam", "Meenambakkam", "Alandur", "Guindy", "Anna Salai"],
     districtScope: "572",
     description: "Jurisdiction: Vandalur to Guindy GST Corridor",
@@ -260,7 +266,7 @@ export const PRESET_USERS: UserProfile[] = [
     id: "usr-egmore",
     name: "Tahsildar (Egmore Div)",
     role: "tahsildar",
-    token: "token-tahsildar-egmore",
+    token: "tahsildar-egmore",
     wardScope: ["Egmore", "Chetpet", "Nungambakkam", "104", "105", "110"],
     districtScope: "571",
     description: "Jurisdiction: Egmore, Chetpet, Nungambakkam",
@@ -269,7 +275,7 @@ export const PRESET_USERS: UserProfile[] = [
     id: "usr-citizen",
     name: "Public Citizen (Bhu-Darpan)",
     role: "citizen",
-    token: "token-citizen",
+    token: "citizen",
     description: "Read-Only Citizen View",
   },
 ];

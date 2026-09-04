@@ -59,6 +59,40 @@ export default function WebGISPage() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
+  // Exchange a persona's login_id (carried in PRESET_USERS[].token) for a real, signed,
+  // backend-issued bearer token via POST /api/auth/login, instead of using the literal
+  // login_id string as if it were a credential.
+  const loginAs = async (profile: UserProfile): Promise<UserProfile> => {
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login_id: profile.token }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return { ...profile, token: data.access_token };
+      }
+    } catch (err) {
+      console.error('Login failed, falling back to unauthenticated citizen scope', err);
+    }
+    return { ...profile, token: '' };
+  };
+
+  // Guards ward/user-scoped data fetches until the initial real login round-trip
+  // completes — without this, the first render fires authenticated requests using the
+  // placeholder login_id string (not a valid signed token) and gets a real, if transient,
+  // 401 back before loginAs() resolves.
+  const [authReady, setAuthReady] = useState(false);
+
+  useEffect(() => {
+    loginAs(PRESET_USERS[1]).then((u) => {
+      setCurrentUser(u);
+      setAuthReady(true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -643,7 +677,9 @@ export default function WebGISPage() {
     mapInstanceRef.current = map;
 
     map.on('load', () => {
-      updateMapData(selectedWard, currentUser);
+      // Data population is left to the [selectedWard, currentUser, authReady] effect,
+      // which already checks isStyleLoaded() for exactly this handoff and won't fire
+      // with an unauthenticated placeholder token before the real login completes.
       fetchWardCourtCases(selectedWard);
     });
   };
@@ -693,12 +729,13 @@ export default function WebGISPage() {
 
   // Trigger update on Ward or User change
   useEffect(() => {
+    if (!authReady) return;
     fetchAdjudication(currentUser, selectedWard);
     fetchWardCourtCases(selectedWard);
     if (mapInstanceRef.current && mapInstanceRef.current.isStyleLoaded()) {
       updateMapData(selectedWard, currentUser);
     }
-  }, [selectedWard, currentUser]);
+  }, [selectedWard, currentUser, authReady]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden', fontFamily: '"Open Sans", -apple-system, BlinkMacSystemFont, sans-serif' }}>
@@ -736,7 +773,7 @@ export default function WebGISPage() {
               value={currentUser.id}
               onChange={(e) => {
                 const u = PRESET_USERS.find((p) => p.id === e.target.value);
-                if (u) setCurrentUser(u);
+                if (u) loginAs(u).then(setCurrentUser);
               }}
               style={{ padding: '4px 8px', background: '#ffffff', color: '#1a4480', border: 'none', borderRadius: '3px', fontWeight: 700, fontSize: '0.8rem', outline: 'none', cursor: 'pointer' }}
             >

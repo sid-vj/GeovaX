@@ -30,7 +30,7 @@ import os
 import threading
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 GENESIS = "0" * 64
 
@@ -82,6 +82,17 @@ class ProvenanceLedger:
         self._lock = threading.Lock()
         if self._path and os.path.exists(self._path):
             self._load()
+
+    @classmethod
+    def from_entries(cls, entries: Iterable[dict[str, Any]]) -> ProvenanceLedger:
+        """Build an in-memory, read-only ledger from already-persisted entries (e.g. rows
+        read back from the ``provenance_ledger`` database mirror), rather than a JSONL
+        file. Entries are trusted to already be in ledger order; ``append()`` still works
+        on the result and will chain correctly from the last loaded entry."""
+        ledger = cls(path=None)
+        for e in entries:
+            ledger._entries.append(LedgerEntry(**e))
+        return ledger
 
     # -- writing ------------------------------------------------------------------
 

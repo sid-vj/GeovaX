@@ -211,7 +211,7 @@ class ChangeDetector:
                 is_actionable=not cross,
             )
             if public_land:
-                enc = self._encroachment(g, public_land)
+                enc = self.encroachment_evidence(g, public_land)
                 if enc is not None:
                     rec.change_type = ChangeType.ENCROACHMENT
                     rec.confidence = enc[0]
@@ -379,7 +379,7 @@ class ChangeDetector:
                 out[k] = (va, vb)
         return out
 
-    def _encroachment(self, geom: BaseGeometry,
+    def encroachment_evidence(self, geom: BaseGeometry,
                       public_land: dict[str, BaseGeometry]) -> tuple[float, str] | None:
         """A new structure standing on land classified as public.
 

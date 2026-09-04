@@ -28,11 +28,14 @@ Stages, and why each is where it is:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 from typing import Any, Iterable, Sequence
 
 from ..attributes.canonical import PARCEL_SCHEMA, validate_record
@@ -75,6 +78,12 @@ class LayerSpec:
     id_fields: tuple[str, ...] = ()
     role: str = "reference"       # "reference" | "candidate" | "context"
     max_features: int | None = None
+    # -- provenance, carried through to SourceDataset and the ledger ---------------
+    tier: str = "official"        # "official" | "mirror" | "proxy" — see SourceDataset.tier
+    platform: str = ""            # the specific portal/service, distinct from `authority`
+    original_format: str = ""
+    coverage: str = ""
+    transformation: str = ""
 
 
 @dataclass
@@ -228,6 +237,11 @@ class HarmonisationPipeline:
                 positional_accuracy_m=spec.accuracy_m,
                 acquired_on=_parse_vintage(spec.vintage),
                 uri=spec.path,
+                tier=spec.tier,
+                platform=spec.platform,
+                original_format=spec.original_format,
+                coverage=spec.coverage,
+                transformation=spec.transformation,
             )
             conn_cls = (GeoJsonLinesConnector if spec.path.endswith(".geojsonl")
                         else GeoJsonConnector)
@@ -252,7 +266,12 @@ class HarmonisationPipeline:
             }
             self.ledger.append(spec.dataset_id, "ingest",
                                {"features": len(feats), "accuracy_m": spec.accuracy_m,
-                                "authority": spec.authority, "licence": spec.licence})
+                                "authority": spec.authority, "licence": spec.licence,
+                                "tier": spec.tier, "platform": spec.platform,
+                                "original_format": spec.original_format,
+                                "coverage": spec.coverage,
+                                "transformation": spec.transformation,
+                                "vintage": spec.vintage})
         return out
 
     def stage_schema_map(self, ingest: dict[str, Any]) -> dict[str, Any]:
@@ -780,9 +799,34 @@ class HarmonisationPipeline:
                        sorted(self.queue.cases.values(), key=lambda x: -x.priority)[:500]],
                       fh, indent=1, default=str)
 
+        db_counts = self._publish_to_database(parcels, buildings, changes, metrics)
+        if db_counts is not None:
+            metrics["database"] = db_counts
+
         return {"parcels": parcel_rows, "buildings": building_rows, "metrics": metrics,
                 "_report": {"written_to": os.path.abspath(cfg.out_dir),
                             **metrics["outputs"]}}
+
+    def _publish_to_database(self, parcels: dict[str, Any], buildings: dict[str, Any],
+                              changes: list[Any], metrics: dict[str, Any]) -> dict[str, int] | None:
+        """Best-effort real PostGIS write. The file output above is always written and
+        remains authoritative regardless of whether a database is reachable — this never
+        raises out of a pipeline run that already succeeded at producing its file output."""
+        from ..db.store import get_engine, publish_to_postgis
+
+        engine = get_engine()
+        if engine is None:
+            return None
+        try:
+            return publish_to_postgis(
+                engine, run_id=self.run_id, aoi_name=self.config.aoi_name,
+                bbox=self.config.bbox, parcels=parcels, buildings=buildings,
+                queue=self.queue, changes_list=[c.to_dict() for c in changes[:20000]],
+                ledger=self.ledger, metrics=metrics,
+            )
+        except Exception as err:  # noqa: BLE001
+            logger.warning("PostGIS publish failed (%s); file output is unaffected.", err)
+            return None
 
     # -- helpers -------------------------------------------------------------------
 

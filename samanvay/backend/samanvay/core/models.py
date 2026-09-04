@@ -169,6 +169,23 @@ class SourceDataset:
     checksum_sha256: str | None = None
     notes: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
+    # -- provenance tier, kept explicit and never blurred upward --------------------
+    tier: str = "official"
+    """One of "official" (fetched directly from the authoritative platform's own documented
+    API/WMS/WFS/download), "mirror" (a legitimate third-party republication of official data,
+    used only when the official platform has no reachable bulk path), or "proxy" (a research/
+    open benchmark dataset standing in for a category with no real Indian source available).
+    Surfaced verbatim in /api/lineage and the ledger so tier-2/3 sources never look identical
+    to tier-1 government data."""
+    platform: str = ""
+    """The specific portal/service the data was retrieved through, distinct from ``authority``
+    (the accountable organisation) — e.g. authority=GCC, platform="OpenCity Urban Data Portal"."""
+    original_format: str = ""
+    coverage: str = ""
+    """Geographic coverage actually acquired, e.g. "Chennai (GCC limits), 200 wards"."""
+    transformation: str = ""
+    """What was done to the data between acquisition and ingestion, e.g. "reprojected
+    EPSG:4326 -> EPSG:32644; clipped to AOI bbox"."""
 
     @property
     def age_days(self) -> float | None:

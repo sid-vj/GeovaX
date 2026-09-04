@@ -184,6 +184,11 @@ CREATE TABLE IF NOT EXISTS harmonised_parcel (
     adjudication_state      text NOT NULL DEFAULT 'auto_resolved',
     change_type             text NOT NULL DEFAULT 'no_change',
 
+    extra_attributes        jsonb NOT NULL DEFAULT '{}'::jsonb,
+    -- Any canonical parcel field (attributes/canonical.py: PARCEL_SCHEMA) without its own
+    -- typed column above, so the database-backed store is lossless relative to the
+    -- flat-file GeoJSON output rather than silently dropping fields as the schema evolves.
+
     ledger_head             char(64),
     valid_from              timestamptz NOT NULL DEFAULT now(),
     valid_to                timestamptz,
@@ -219,6 +224,7 @@ CREATE TABLE IF NOT EXISTS harmonised_building (
     confidence_grade    char(1) NOT NULL,
     contributing_datasets text[] NOT NULL DEFAULT '{}',
     change_type         text NOT NULL DEFAULT 'no_change',
+    extra_attributes    jsonb NOT NULL DEFAULT '{}'::jsonb,
     ledger_head         char(64),
     created_at          timestamptz NOT NULL DEFAULT now()
 );
@@ -382,6 +388,12 @@ CREATE TABLE IF NOT EXISTS pipeline_run (
     status          text NOT NULL DEFAULT 'running',
     stage_reports   jsonb NOT NULL DEFAULT '{}'::jsonb,
     metrics         jsonb NOT NULL DEFAULT '{}'::jsonb,
+    queue_briefs    jsonb NOT NULL DEFAULT '[]'::jsonb,
+    -- Pre-rendered adjudication-queue briefs (AdjudicationCase.brief()), mirroring
+    -- adjudication_queue.json in the file-backed store — the structured case rows live in
+    -- adjudication_case, this is the display-ready form the API/console reads directly.
+    changes         jsonb NOT NULL DEFAULT '[]'::jsonb,
+    -- Pre-rendered change records (ChangeRecord.to_dict()), mirroring changes.json.
     ledger_root     char(64),
     software_version text
 );

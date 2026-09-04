@@ -12,56 +12,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
-from samanvay.core.models import FeatureClass, SourceType  # noqa: E402
-from samanvay.pipeline.harmonise import (HarmoniseConfig, HarmonisationPipeline,  # noqa: E402
-                                         LayerSpec)
-
-AOIS = {
-    "core": ("Chennai Central", (80.20, 13.03, 80.28, 13.11)),
-    "test": ("Chennai Chetpet tile", (80.235, 13.070, 80.250, 13.085)),
-    "mid":  ("Chennai Nungambakkam-Kilpauk", (80.225, 13.045, 80.265, 13.095)),
-}
-
-
-def layers(data_dir: str, max_features: int | None) -> list[LayerSpec]:
-    return [
-        LayerSpec(
-            dataset_id="TNGIS_CADASTRE",
-            path=os.path.join(data_dir, "cadastre_tngis.geojsonl"),
-            source_type=SourceType.CADASTRAL_MAP,
-            feature_class=FeatureClass.PARCEL,
-            authority="TNGIS", licence="CC0-1.0", accuracy_m=3.0, vintage="2023",
-            id_fields=("survey_number", "lgd_village_code"),
-            role="reference", max_features=max_features,
-        ),
-        LayerSpec(
-            dataset_id="NCSCM_CADASTRE",
-            path=os.path.join(data_dir, "cadastre_ncscm.geojsonl"),
-            source_type=SourceType.CADASTRAL_MAP,
-            feature_class=FeatureClass.PARCEL,
-            authority="NCSCM", licence="CC0-1.0", accuracy_m=5.0, vintage="2019",
-            id_fields=("Survey_Number", "Village"),
-            role="candidate", max_features=max_features,
-        ),
-        LayerSpec(
-            dataset_id="GCC_BUILDINGS",
-            path=os.path.join(data_dir, "buildings_gcc.geojsonl"),
-            source_type=SourceType.MUNICIPAL_GIS,
-            feature_class=FeatureClass.BUILDING,
-            authority="GCC", licence="CC0-1.0", accuracy_m=1.0, vintage="2024",
-            id_fields=("gcc_gis_id",),
-            role="reference", max_features=max_features,
-        ),
-        LayerSpec(
-            dataset_id="GOOGLE_OPEN_BUILDINGS",
-            path=os.path.join(data_dir, "buildings_gob.geojsonl"),
-            source_type=SourceType.AI_EXTRACTION,
-            feature_class=FeatureClass.BUILDING,
-            authority="NRSC", licence="CC-BY-4.0", accuracy_m=1.8, vintage="2023",
-            id_fields=("gob_id",),
-            role="candidate", max_features=max_features,
-        ),
-    ]
+from samanvay.pipeline.harmonise import HarmoniseConfig, HarmonisationPipeline  # noqa: E402
+from samanvay.pipeline.presets import AOIS, default_layers as layers  # noqa: E402
 
 
 def main() -> int:

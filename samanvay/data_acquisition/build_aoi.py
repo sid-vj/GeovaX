@@ -181,6 +181,58 @@ def clip_parquet(path: str, out_path: str, box: tuple[float, float, float, float
     }
 
 
+def clip_csv_wkt(path: str, out_path: str, box: tuple[float, float, float, float],
+                 *, min_confidence: float = 0.0) -> dict[str, Any]:
+    """Clip a gzipped CSV with a WKT ``geometry`` column — the real format Google Open
+    Buildings V3 ships (``latitude,longitude,area_in_meters,confidence,geometry,
+    full_plus_code``), not GeoJSON or parquet."""
+    import csv
+    import gzip
+
+    from shapely import wkt as shp_wkt
+
+    t0 = time.time()
+    kept = 0
+    scanned = 0
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    opener = gzip.open if path.endswith(".gz") else open
+    with opener(path, "rt", encoding="utf-8") as src, open(out_path, "w", encoding="utf-8") as dst:
+        reader = csv.DictReader(src)
+        for row in reader:
+            scanned += 1
+            try:
+                lon, lat = float(row["longitude"]), float(row["latitude"])
+            except (KeyError, ValueError):
+                continue
+            if not (box[0] - 0.01 <= lon <= box[2] + 0.01 and box[1] - 0.01 <= lat <= box[3] + 0.01):
+                continue
+            conf = float(row.get("confidence") or 0.0)
+            if conf < min_confidence:
+                continue
+            try:
+                geom = shp_wkt.loads(row["geometry"])
+            except Exception:  # noqa: BLE001
+                continue
+            b = geom.bounds
+            if not _hits(b, box):
+                continue
+            dst.write(json.dumps({
+                "type": "Feature",
+                "geometry": geom.__geo_interface__,
+                "properties": {
+                    "gob_id": f"GOB-{scanned:08d}",
+                    "confidence": conf,
+                    "area_in_meters": float(row.get("area_in_meters") or 0.0),
+                    "full_plus_code": row.get("full_plus_code"),
+                },
+            }, separators=(",", ":")) + "\n")
+            kept += 1
+    return {
+        "input": path, "output": out_path, "scanned": scanned, "kept": kept,
+        "seconds": round(time.time() - t0, 2), "bytes_out": os.path.getsize(out_path),
+    }
+
+
 def clip_geojson(path: str, out_path: str,
                  box: tuple[float, float, float, float]) -> dict[str, Any]:
     with open(path, encoding="utf-8") as fh:
@@ -215,7 +267,7 @@ PLAN = [
     ("ncscm_cadastre", "NCSCM_TN_Cadastrals.geojsonl", "cadastre_ncscm.geojsonl", "geojsonl"),
     ("gcc_buildings", "TNGIS_GCC_Chennai_buildings.geojsonl", "buildings_gcc.geojsonl", "geojsonl"),
     ("amrut_buildings", "TN_AMRUT_Buildings.geojsonl", "buildings_amrut.geojsonl", "geojsonl"),
-    ("google_open_buildings", "gobi_010001.parquet", "buildings_gob.geojsonl", "parquet"),
+    ("google_open_buildings", "gobi_3a5_buildings.csv.gz", "buildings_gob.geojsonl", "csv_wkt_gz"),
     ("gcc_wards", "chennai_wards.geojson", "wards_gcc.geojson", "geojson"),
     ("gcc_zones", "chennai_zones.geojson", "zones_gcc.geojson", "geojson"),
 ]
@@ -253,6 +305,8 @@ def main() -> int:
             stats = clip_geojsonl(src_path, out_path, aoi.bbox)
         elif kind == "parquet":
             stats = clip_parquet(src_path, out_path, aoi.bbox)
+        elif kind == "csv_wkt_gz":
+            stats = clip_csv_wkt(src_path, out_path, aoi.bbox)
         else:
             stats = clip_geojson(src_path, out_path, aoi.bbox)
         ds = CATALOGUE[key]

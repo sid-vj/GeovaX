@@ -15,10 +15,29 @@ import hashlib
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sys
 import time
 import urllib.request
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """Prefer the OS trust store when present — some government sites (seen live on
+    ncscm.res.in) serve an incomplete chain for an older root that's still in the macOS/
+    system bundle but has been pruned from certifi's curated one; verifying against only
+    certifi then fails a real, valid certificate. Falls back to certifi, then Python's
+    bare defaults, so this still works on Linux/CI where no /etc/ssl/cert.pem exists."""
+    for system_bundle in ("/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt"):
+        if os.path.exists(system_bundle):
+            return ssl.create_default_context(cafile=system_bundle)
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:  # pragma: no cover
+        return ssl.create_default_context()
+
+
+_SSL_CONTEXT = _build_ssl_context()
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -59,7 +78,7 @@ def download(url: str, dest: str, *, retries: int = 3) -> dict[str, object]:
             t0 = time.time()
             req = urllib.request.Request(url, headers={"User-Agent": UA})
             tmp = dest + ".part"
-            with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as fh:
+            with urllib.request.urlopen(req, timeout=120, context=_SSL_CONTEXT) as r, open(tmp, "wb") as fh:
                 total = int(r.headers.get("Content-Length") or 0)
                 got = 0
                 while True:
@@ -91,6 +110,26 @@ def extract_7z(archive: str, out_dir: str) -> str | None:
     subprocess.run([exe, "x", "-y", f"-o{out_dir}", archive],
                    check=False, stdout=subprocess.DEVNULL)
     return out_dir
+
+
+def resolve_ckan_resource_url(ckan_base: str, dataset_id: str, name_hint: str = "") -> str:
+    """Resolve a CKAN dataset id to a real resource download URL via the portal's documented
+    `package_show` API — the correct way to fetch from a CKAN-based open-data portal (like
+    OpenCity), since a dataset's human-facing page is not itself a file. When a dataset has
+    several resources (e.g. ward maps for multiple years), `name_hint` picks the one whose
+    resource name contains it (case-insensitive); otherwise the first resource is used."""
+    api_url = f"{ckan_base.rstrip('/')}/api/3/action/package_show"
+    req = urllib.request.Request(f"{api_url}?id={dataset_id}", headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=30, context=_SSL_CONTEXT) as r:
+        payload = json.loads(r.read().decode("utf-8"))
+    resources = payload.get("result", {}).get("resources", [])
+    if not resources:
+        raise RuntimeError(f"CKAN package '{dataset_id}' at {ckan_base} has no resources")
+    if name_hint:
+        for res in resources:
+            if name_hint.lower() in (res.get("name") or "").lower():
+                return res["url"]
+    return resources[0]["url"]
 
 
 def clone_git(spec: str, out_dir: str) -> dict[str, object]:
@@ -145,10 +184,34 @@ def main() -> int:
         entry: dict[str, object] = {
             "key": key, "title": ds.title, "authority": ds.authority_name,
             "licence": ds.licence, "url": ds.url, "upstream": ds.upstream,
-            "vintage": ds.vintage, "role": ds.role,
+            "vintage": ds.vintage, "role": ds.role, "tier": ds.tier,
         }
 
-        if ds.url.startswith("git+"):
+        if ds.requires_credentials:
+            entry["status"] = "requires_credentials"
+            entry["note"] = (
+                f"{ds.platform or ds.upstream} requires real registration/login this "
+                "environment cannot complete. Set the documented env var for this source "
+                "and re-run to fetch for real; nothing was downloaded or fabricated."
+            )
+            receipt["datasets"].append(entry)
+            print(f"      requires_credentials — {entry['note']}\n")
+            continue
+
+        if ds.resolver == "ckan":
+            try:
+                real_url = resolve_ckan_resource_url(ds.ckan_base, ds.ckan_dataset, ds.ckan_resource_hint)
+            except Exception as exc:  # noqa: BLE001
+                entry.update({"status": "failed", "error": f"CKAN resolution failed: {exc}"})
+                receipt["datasets"].append(entry)
+                print(f"      failed: {exc}\n")
+                continue
+            entry["resolved_url"] = real_url
+            dest = os.path.join(args.out, ds.filename)
+            entry.update(download(real_url, dest))
+            if entry.get("status") in ("downloaded", "cached"):
+                entry["sha256"] = sha256(dest)
+        elif ds.url.startswith("git+"):
             entry.update(clone_git(ds.url, args.out))
         else:
             dest = os.path.join(args.out, ds.filename)
@@ -172,10 +235,14 @@ def main() -> int:
 
     ok = sum(1 for d in receipt["datasets"] if d.get("status") in
              ("downloaded", "cached", "cloned"))
-    print(f"  {ok}/{len(receipt['datasets'])} datasets available in {args.out}")
+    gated = sum(1 for d in receipt["datasets"] if d.get("status") == "requires_credentials")
+    failed = len(receipt["datasets"]) - ok - gated
+    print(f"  {ok}/{len(receipt['datasets'])} datasets fetched"
+          + (f", {gated} require credentials this environment doesn't have" if gated else "")
+          + f" in {args.out}")
     print("  next: python data_acquisition/build_aoi.py --raw "
           f"{args.out} --out data/aoi")
-    return 0 if ok == len(receipt["datasets"]) else 1
+    return 0 if failed == 0 else 1
 
 
 if __name__ == "__main__":
