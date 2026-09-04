@@ -207,6 +207,27 @@ test.describe('GeovaX — jurisdiction-driven registry panel', () => {
     expect(hasHonestExplanation).toBeTruthy();
   });
 
+  test('Telemetry does not carry a stale parcel over into a jurisdiction with zero real parcels', async ({ page }) => {
+    await boot(page);
+    // Egmore has real parcels and auto-selects the first one.
+    await selectWard(page, 'Egmore');
+    await page.getByText(/Telemetry/).first().click();
+    await page.waitForTimeout(1000);
+    const egmoreText = await page.locator('body').innerText();
+    const egmoreUlpin = (egmoreText.match(/BHU-AADHAAR 14-DIGIT ULPIN\n[^\n]*\n([A-Z0-9]+)/) || [])[1];
+    expect(egmoreUlpin, 'Egmore should have a real selected parcel to begin with').toBeTruthy();
+
+    // Vandalur (outside the pipeline AOI) has zero real parcels — the previously-selected
+    // Egmore parcel must not still be showing under Vandalur's header.
+    await selectWard(page, 'Vandalur');
+    await page.getByText(/Telemetry/).first().click();
+    await page.waitForTimeout(1000);
+    const vandalurText = await page.locator('body').innerText();
+    expect(vandalurText).not.toContain(egmoreUlpin);
+    expect(vandalurText).not.toContain('BHU-AADHAAR 14-DIGIT ULPIN');
+    expect(vandalurText).toContain('Click any parcel');
+  });
+
   test('AI rooftop extraction runs against the currently-selected AOI, not a hardcoded one', async ({ page }) => {
     await boot(page);
     await selectWard(page, 'Mylapore');

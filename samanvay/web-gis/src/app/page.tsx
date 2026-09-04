@@ -560,6 +560,13 @@ export default function WebGISPage() {
 
         if (parcelsList.length > 0) {
           setSelectedParcel(parcelsList[0]);
+        } else {
+          // Without this, switching to a jurisdiction with zero real parcels (e.g. one
+          // outside the pipeline's AOI) left whatever parcel was selected in the *previous*
+          // ward still showing in the Telemetry/Dossier parcel panel — a different ward's
+          // real ULPIN, survey number, taluk and confidence rendering under the new
+          // jurisdiction's header as if it belonged there.
+          setSelectedParcel(null);
         }
       }
     } catch (err) {
