@@ -5,12 +5,16 @@ import { PRESET_USERS, AVAILABLE_WARDS, UserProfile, WardLocation } from '../lib
 
 export default function WebGISPage() {
   const [currentUser, setCurrentUser] = useState<UserProfile>(PRESET_USERS[1]); // Tahsildar (Vandalur – Guindy Corridor)
-  const [selectedWard, setSelectedWard] = useState<WardLocation>(AVAILABLE_WARDS[5]); // Default Veeralakshmi Nagar / Mudichur
+  const [selectedWard, setSelectedWard] = useState<WardLocation>(AVAILABLE_WARDS.find(w => w.id === 'Anna Salai') || AVAILABLE_WARDS[0]); // Default Anna Salai
   const [selectedStreet, setSelectedStreet] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [baseMapType, setBaseMapType] = useState<'osiris-sat' | 'osiris-dark' | 'osiris-streets'>('osiris-sat');
   const [parcelOpacity, setParcelOpacity] = useState<number>(0.35);
   const [showUtilities, setShowUtilities] = useState<boolean>(true);
+  const [showEncroachment, setShowEncroachment] = useState<boolean>(true);
+  const [showUncertainty, setShowUncertainty] = useState<boolean>(false);
+  const [showGeoSatLayer, setShowGeoSatLayer] = useState<boolean>(true);
+  const [showDroneLayer, setShowDroneLayer] = useState<boolean>(false);
   
   // OSIRIS Live Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -48,6 +52,7 @@ export default function WebGISPage() {
   const [accessAlert, setAccessAlert] = useState<string | null>(null);
   const [rightPanelTab, setRightPanelTab] = useState<'litigation' | 'ward' | 'parcel'>('litigation');
   const [sidebarTab, setSidebarTab] = useState<'zones' | 'layers' | 'revenue'>('zones');
+  const [showWelcome, setShowWelcome] = useState<boolean>(true);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
@@ -459,6 +464,10 @@ export default function WebGISPage() {
             type: 'geojson',
             data: `http://127.0.0.1:8000/collections/utilities/items`,
           },
+          encroachment: {
+            type: 'geojson',
+            data: 'http://127.0.0.1:8000/api/analytics/encroachment',
+          },
           'aoi-boundary': {
             type: 'geojson',
             data: {
@@ -544,6 +553,25 @@ export default function WebGISPage() {
             },
           },
           {
+            id: 'encroachment-fill',
+            type: 'fill',
+            source: 'encroachment',
+            paint: {
+              'fill-color': '#ff1744',
+              'fill-opacity': 0.8,
+            },
+          },
+          {
+            id: 'encroachment-line',
+            type: 'line',
+            source: 'encroachment',
+            paint: {
+              'line-color': '#d50000',
+              'line-width': 2.5,
+              'line-dasharray': [3, 3],
+            },
+          },
+          {
             id: 'parcels-fill',
             type: 'fill',
             source: 'parcels',
@@ -625,19 +653,19 @@ export default function WebGISPage() {
     if (mapInstanceRef.current && mapInstanceRef.current.isStyleLoaded()) {
       const map = mapInstanceRef.current;
       if (map.getLayer('osiris-sat-layer')) {
-        map.setLayoutProperty('osiris-sat-layer', 'visibility', baseMapType === 'osiris-sat' ? 'visible' : 'none');
+        map.setLayoutProperty('osiris-sat-layer', 'visibility', showGeoSatLayer ? 'visible' : 'none');
       }
       if (map.getLayer('osiris-labels-layer')) {
-        map.setLayoutProperty('osiris-labels-layer', 'visibility', baseMapType === 'osiris-sat' ? 'visible' : 'none');
+        map.setLayoutProperty('osiris-labels-layer', 'visibility', showGeoSatLayer || showDroneLayer ? 'visible' : 'none');
       }
       if (map.getLayer('osiris-dark-layer')) {
         map.setLayoutProperty('osiris-dark-layer', 'visibility', baseMapType === 'osiris-dark' ? 'visible' : 'none');
       }
       if (map.getLayer('osiris-streets-layer')) {
-        map.setLayoutProperty('osiris-streets-layer', 'visibility', baseMapType === 'osiris-streets' ? 'visible' : 'none');
+        map.setLayoutProperty('osiris-streets-layer', 'visibility', showDroneLayer ? 'visible' : 'none');
       }
     }
-  }, [baseMapType]);
+  }, [baseMapType, showGeoSatLayer, showDroneLayer]);
 
   // Update Parcel Opacity
   useEffect(() => {
@@ -648,12 +676,20 @@ export default function WebGISPage() {
 
   // Toggle Utilities Layer visibility
   useEffect(() => {
+    const visibility = showUtilities ? 'visible' : 'none';
     if (mapInstanceRef.current && mapInstanceRef.current.getLayer('utilities-lines')) {
-      const visibility = showUtilities ? 'visible' : 'none';
       mapInstanceRef.current.setLayoutProperty('utilities-lines', 'visibility', visibility);
       mapInstanceRef.current.setLayoutProperty('utilities-lines-glow', 'visibility', visibility);
     }
   }, [showUtilities]);
+
+  useEffect(() => {
+    const encVis = showEncroachment ? 'visible' : 'none';
+    if (mapInstanceRef.current && mapInstanceRef.current.getLayer('encroachment-fill')) {
+      mapInstanceRef.current.setLayoutProperty('encroachment-fill', 'visibility', encVis);
+      mapInstanceRef.current.setLayoutProperty('encroachment-line', 'visibility', encVis);
+    }
+  }, [showEncroachment]);
 
   // Trigger update on Ward or User change
   useEffect(() => {
@@ -685,7 +721,7 @@ export default function WebGISPage() {
             <span>GOVERNMENT OF INDIA · GEOVAX</span>
           </div>
           <span style={{ fontSize: '0.72rem', background: '#00507a', padding: '3px 10px', borderRadius: '4px', border: '1px solid #00ffff', fontWeight: 700, color: '#00ffff' }}>
-            👁️ OSIRIS AI Engine: Active
+            👁️ NIC GeoAI Engine: Active
           </span>
         </div>
 
@@ -748,22 +784,6 @@ export default function WebGISPage() {
               📍 Zones
             </button>
             <button
-              onClick={() => setSidebarTab('layers')}
-              style={{
-                flex: 1,
-                padding: '10px 4px',
-                fontSize: '0.75rem',
-                fontWeight: 700,
-                border: 'none',
-                background: sidebarTab === 'layers' ? '#ffffff' : 'transparent',
-                color: sidebarTab === 'layers' ? '#005ea2' : '#565c65',
-                borderBottom: sidebarTab === 'layers' ? '3px solid #005ea2' : 'none',
-                cursor: 'pointer',
-              }}
-            >
-              🛰️ OSIRIS Layers
-            </button>
-            <button
               onClick={() => setSidebarTab('revenue')}
               style={{
                 flex: 1,
@@ -777,7 +797,7 @@ export default function WebGISPage() {
                 cursor: 'pointer',
               }}
             >
-              ⚖️ Adjudication
+              ⚖️ e-Courts Adjudication
             </button>
           </div>
 
@@ -786,7 +806,7 @@ export default function WebGISPage() {
             <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
               <div>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  Select Regional Jurisdiction (Vandalur ➔ Guindy)
+                  Select National / Regional Jurisdiction
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
                   {AVAILABLE_WARDS.filter((w) => w.id !== 'all').map((w) => (
@@ -859,112 +879,7 @@ export default function WebGISPage() {
             </div>
           )}
 
-          {/* TAB CONTENT: OSIRIS Layers & Opacity */}
-          {sidebarTab === 'layers' && (
-            <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '6px', padding: '10px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    🛰️ OSIRIS Cadastre Opacity
-                  </span>
-                  <span style={{
-                    fontSize: '0.75rem',
-                    fontWeight: 700,
-                    color: '#ffffff',
-                    background: '#005ea2',
-                    padding: '2px 8px',
-                    borderRadius: '12px',
-                  }}>
-                    {Math.round(parcelOpacity * 100)}%
-                  </span>
-                </div>
-
-                <input
-                  type="range"
-                  min="0.05"
-                  max="0.9"
-                  step="0.05"
-                  value={parcelOpacity}
-                  onChange={(e) => setParcelOpacity(parseFloat(e.target.value))}
-                  style={{ width: '100%', cursor: 'pointer', height: '6px', accentColor: '#005ea2' }}
-                />
-
-                <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
-                  <button
-                    onClick={() => setParcelOpacity(0.15)}
-                    style={{
-                      flex: 1,
-                      padding: '4px',
-                      fontSize: '0.68rem',
-                      border: '1px solid #dfe1e2',
-                      borderRadius: '3px',
-                      background: parcelOpacity <= 0.2 ? '#005ea2' : '#ffffff',
-                      color: parcelOpacity <= 0.2 ? '#ffffff' : '#565c65',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    15% Clear
-                  </button>
-                  <button
-                    onClick={() => setParcelOpacity(0.35)}
-                    style={{
-                      flex: 1,
-                      padding: '4px',
-                      fontSize: '0.68rem',
-                      border: '1px solid #dfe1e2',
-                      borderRadius: '3px',
-                      background: parcelOpacity > 0.2 && parcelOpacity <= 0.5 ? '#005ea2' : '#ffffff',
-                      color: parcelOpacity > 0.2 && parcelOpacity <= 0.5 ? '#ffffff' : '#565c65',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    35% Balanced
-                  </button>
-                  <button
-                    onClick={() => setParcelOpacity(0.70)}
-                    style={{
-                      flex: 1,
-                      padding: '4px',
-                      fontSize: '0.68rem',
-                      border: '1px solid #dfe1e2',
-                      borderRadius: '3px',
-                      background: parcelOpacity > 0.5 ? '#005ea2' : '#ffffff',
-                      color: parcelOpacity > 0.5 ? '#ffffff' : '#565c65',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    70% Solid
-                  </button>
-                </div>
-              </div>
-
-              {/* Multi-Agency Utilities Toggle */}
-              <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '6px', padding: '10px' }}>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '8px' }}>
-                  ⚡ Multi-Agency Utilities
-                </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', marginBottom: '6px', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={showUtilities}
-                    onChange={(e) => setShowUtilities(e.target.checked)}
-                    style={{ width: '16px', height: '16px', accentColor: '#005ea2', cursor: 'pointer' }}
-                  />
-                  <span style={{ fontWeight: 600, color: '#1b1b1b' }}>Underground Infrastructure Network</span>
-                </label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginLeft: '24px' }}>
-                  <span style={{ fontSize: '0.68rem', color: '#005ea2', fontWeight: 600 }}>🔵 CMWSSB Water (600mm DI Main)</span>
-                  <span style={{ fontSize: '0.68rem', color: '#8c5b00', fontWeight: 600 }}>🟠 TANGEDCO 110kV HT Power Grid</span>
-                  <span style={{ fontSize: '0.68rem', color: '#00a91c', fontWeight: 600 }}>🟢 RCC Stormwater Culverts</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB CONTENT: Revenue Adjudication */}
+          {/* TAB CONTENT: DILRMP & e-Courts Adjudication */}
           {sidebarTab === 'revenue' && (
             <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
@@ -1016,7 +931,7 @@ export default function WebGISPage() {
               {/* OSIRIS AI SAM Extractor */}
               <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '6px', padding: '10px' }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  🧠 OSIRIS AI: PyTorch SAM
+                  🧠 NIC GeoAI: PyTorch SAM
                 </div>
                 <button
                   onClick={handleTriggerGeoAI}
@@ -1071,10 +986,10 @@ export default function WebGISPage() {
             style={{
               position: 'absolute',
               top: 14,
-              left: '50%',
-              transform: 'translateX(-50%)',
+              left: 14,
               zIndex: 30,
               width: '540px',
+              maxWidth: 'calc(100% - 60px)',
             }}
           >
             <div style={{
@@ -1091,7 +1006,7 @@ export default function WebGISPage() {
               <input
                 ref={searchInputRef}
                 type="text"
-                placeholder="OSIRIS AI: Search Veeralakshmi Nagar, Mudichur, streets, stations..."
+                placeholder="Search for a location, parcel, or street..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
@@ -1200,8 +1115,9 @@ export default function WebGISPage() {
           {/* OSIRIS AI Multi-Engine Switcher */}
           <div style={{
             position: 'absolute',
-            top: 14,
-            left: 14,
+            bottom: 24,
+            left: '50%',
+            transform: 'translateX(-50%)',
             zIndex: 20,
             background: '#0d1d30',
             borderRadius: '6px',
@@ -1224,7 +1140,7 @@ export default function WebGISPage() {
                 cursor: 'pointer',
               }}
             >
-              🛰️ OSIRIS Sat
+              🛰️ Bhuvan Sat
             </button>
             <button
               onClick={() => setBaseMapType('osiris-dark')}
@@ -1239,7 +1155,7 @@ export default function WebGISPage() {
                 cursor: 'pointer',
               }}
             >
-              🌑 OSIRIS Dark
+              🌑 Bhuvan Dark
             </button>
             <button
               onClick={() => setBaseMapType('osiris-streets')}
@@ -1316,6 +1232,66 @@ export default function WebGISPage() {
             </div>
           )}
 
+          {/* Floating Action HUD: Active Learning Metrics */}
+          <div style={{
+            position: 'absolute', top: 110, left: 14, zIndex: 20,
+            background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(8px)',
+            borderRadius: '6px', border: '1px solid #dfe1e2', padding: '10px 14px',
+            boxShadow: '0 4px 15px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: '4px',
+            maxWidth: '280px'
+          }}>
+            <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#1a4480', textTransform: 'uppercase' }}>
+              🧠 AI Active Learning
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginTop: '4px' }}>
+              <span style={{ color: '#00a91c', fontWeight: 700 }}>Auto-Integrated</span>
+              <span style={{ color: '#d83933', fontWeight: 700 }}>Human Review</span>
+            </div>
+            <div style={{ height: '6px', background: '#d83933', borderRadius: '3px', overflow: 'hidden', display: 'flex', width: '100%' }}>
+              <div style={{ width: '87%', background: '#00a91c' }}></div>
+            </div>
+            <div style={{ fontSize: '0.65rem', color: '#565c65', marginTop: '2px' }}>
+              <strong>87%</strong> auto-harmonized. <strong>13%</strong> queued.
+            </div>
+          </div>
+
+          {/* Floating Action HUD: GeoAI Layer Toggles */}
+          <div style={{
+            position: 'absolute', bottom: 40, right: 10, zIndex: 20,
+            background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(8px)',
+            borderRadius: '6px', border: '1px solid #dfe1e2', padding: '10px 14px',
+            boxShadow: '0 4px 15px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: '8px'
+          }}>
+            <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#1a4480', textTransform: 'uppercase' }}>
+              🗺️ Bhuvan Map Layers
+            </div>
+            
+            {/* Map Theme Toggle */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer', marginTop: '4px' }}>
+              <input type="checkbox" checked={showGeoSatLayer} onChange={(e) => setShowGeoSatLayer(e.target.checked)} style={{ accentColor: '#005ea2' }} />
+              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>GeoSat Base Layer</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={showDroneLayer} onChange={(e) => setShowDroneLayer(e.target.checked)} style={{ accentColor: '#005ea2' }} />
+              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>High-Res Drone Imagery</span>
+            </label>
+
+            <hr style={{ margin: '2px 0', border: '0', borderTop: '1px solid #dfe1e2' }} />
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={showEncroachment} onChange={(e) => setShowEncroachment(e.target.checked)} style={{ accentColor: '#d50000' }} />
+              <span style={{ fontWeight: 600, color: '#d50000' }}>Bi-Temporal Encroachments</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={showUncertainty} onChange={(e) => setShowUncertainty(e.target.checked)} style={{ accentColor: '#e65100' }} />
+              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>Per-Vertex Uncertainty</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={showUtilities} onChange={(e) => setShowUtilities(e.target.checked)} style={{ accentColor: '#005ea2' }} />
+              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>PM GatiShakti NMP Utilities</span>
+            </label>
+          </div>
+
           {/* Real-time Map Coordinates HUD */}
           <div style={{
             position: 'absolute',
@@ -1336,7 +1312,7 @@ export default function WebGISPage() {
           }}>
             <span>👁️ <strong>{cursorCoords.lat}° N, {cursorCoords.lng}° E</strong></span>
             <span>·</span>
-            <span>OSIRIS Geodetic EPSG:32644</span>
+            <span>SoI Geodetic EPSG:32644</span>
           </div>
 
           {/* 2D View Container */}
@@ -1354,7 +1330,7 @@ export default function WebGISPage() {
               alignItems: 'center',
               color: '#ffffff',
             }}>
-              <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🌐 OSIRIS AI 3D Engine</div>
+              <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🌐 NIC GeoAI 3D Engine</div>
               <div style={{ maxWidth: '520px', textAlign: 'center', fontSize: '0.95rem', color: '#a9d9e8', lineHeight: '1.6' }}>
                 Rendering High-Resolution Satellite Texture draped over 3D Digital Elevation Models (DEM) & LOD1 CityJSON Building Extrusions for {selectedWard.name}.
               </div>
@@ -1383,7 +1359,7 @@ export default function WebGISPage() {
               {selectedWard.name}
             </div>
             <div style={{ fontSize: '0.75rem', color: '#dfe1e2' }}>
-              Taluk: {selectedWard.taluk} · Corridor: Vandalur to Guindy
+              Taluk: {selectedWard.taluk} · Corridor: Pan-India Integration
             </div>
 
             {/* Tab Switcher */}
@@ -1553,6 +1529,27 @@ export default function WebGISPage() {
                 </div>
               </div>
 
+              {/* AI Active Learning Dashboard */}
+              <div style={{ background: '#f8f9fa', border: '1px solid #1a4480', borderRadius: '4px', padding: '10px' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
+                  🧠 AI Active Learning Engine
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', marginBottom: '2px' }}>
+                      <span style={{ color: '#00a91c', fontWeight: 700 }}>Auto-Integrated</span>
+                      <span style={{ color: '#d83933', fontWeight: 700 }}>Human Review</span>
+                    </div>
+                    <div style={{ height: '8px', background: '#d83933', borderRadius: '4px', overflow: 'hidden', display: 'flex' }}>
+                      <div style={{ width: '87%', background: '#00a91c' }}></div>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: '0.7rem', color: '#565c65', marginTop: '6px' }}>
+                  <strong>87%</strong> of parcels automatically harmonized via Graph-Based Matching. <strong>13%</strong> queued for manual adjudication.
+                </div>
+              </div>
+
               <div>
                 <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
                   📋 Surveyed Parcels in {selectedWard.id} ({wardParcels.length})
@@ -1660,6 +1657,50 @@ export default function WebGISPage() {
                     </div>
                   </div>
 
+                  {/* ADVANCED LADM & BITEMPORAL AUDIT PANEL */}
+                  <div style={{ marginTop: '12px', marginBottom: '12px', border: '1px solid #1a4480', borderRadius: '4px', fontSize: '0.75rem' }}>
+                    <div style={{ background: '#1a4480', color: 'white', padding: '6px 8px', fontWeight: 600, display: 'flex', justifyContent: 'space-between' }}>
+                      <span>🏛️ ISO 19152 (LADM) Profile</span>
+                      <span style={{ background: '#00a91c', padding: '1px 6px', borderRadius: '10px', fontSize: '0.65rem' }}>CONFORMANT</span>
+                    </div>
+                    <div style={{ padding: '6px 8px', background: '#f0f4f8' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <span style={{ color: '#565c65' }}>LA_BAUnit:</span>
+                        <strong style={{ fontFamily: 'monospace' }}>{selectedParcel.ladm_ba_unit || 'BAU_PENDING'}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <span style={{ color: '#565c65' }}>LA_SpatialUnit:</span>
+                        <strong style={{ fontFamily: 'monospace' }}>{selectedParcel.ladm_spatial_unit || 'SU_PENDING'}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <span style={{ color: '#565c65' }}>LA_RRR:</span>
+                        <strong>{selectedParcel.ladm_rrr || 'Right(Freehold)'}</strong>
+                      </div>
+                    </div>
+                    
+                    <div style={{ background: '#e1f3f8', borderTop: '1px solid #c9e4eb', padding: '6px 8px' }}>
+                      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#005ea2', marginBottom: '4px' }}>⏳ Bi-Temporal Cadastre Versioning</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+                        <span style={{ color: '#565c65' }}>Valid Time:</span>
+                        <strong>{selectedParcel.valid_time_start || '2018-05-12T00:00:00Z'}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#565c65' }}>Transaction Time:</span>
+                        <strong>{selectedParcel.transaction_time || '2024-03-01T14:30:22Z'}</strong>
+                      </div>
+                    </div>
+
+                    <div style={{ background: '#fff9e6', borderTop: '1px solid #ffe699', padding: '6px 8px' }}>
+                      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#8c5b00', marginBottom: '4px' }}>🔍 Per-Vertex Audit Lineage</div>
+                      <div style={{ color: '#565c65', fontSize: '0.7rem' }}>
+                        Vertex 1: <strong>SoI CORS ({selectedParcel.vertex_uncertainty_cm?.[0] || 5}cm)</strong><br />
+                        Vertex 2: <strong>SoI CORS ({selectedParcel.vertex_uncertainty_cm?.[1] || 12}cm)</strong><br />
+                        Vertex 3: <strong>SWAMITVA Drone ORI ({selectedParcel.vertex_uncertainty_cm?.[2] || 18}cm)</strong><br />
+                        Vertex 4: <strong>DILRMP FMB Archive ({selectedParcel.vertex_uncertainty_cm?.[3] || 80}cm)</strong><br />
+                      </div>
+                    </div>
+                  </div>
+
                   {/* FMB CAD Studio Action Button */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     <button
@@ -1690,6 +1731,75 @@ export default function WebGISPage() {
           )}
         </section>
       </div>
+
+      {/* ========================================================================= */}
+      {/* 0. WELCOME ONBOARDING MODAL */}
+      {/* ========================================================================= */}
+      {showWelcome && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0, 15, 35, 0.8)', backdropFilter: 'blur(5px)',
+          display: 'flex', justifyContent: 'center', alignItems: 'center',
+          zIndex: 9999, padding: '20px',
+        }}>
+          <div style={{
+            background: '#ffffff', borderRadius: '12px', width: '600px', maxWidth: '95vw',
+            boxShadow: '0 20px 50px rgba(0,0,0,0.5)', overflow: 'hidden'
+          }}>
+            <div style={{ background: '#005ea2', padding: '24px', color: '#ffffff', textAlign: 'center' }}>
+              <h2 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '2rem' }}>🌍</span> Welcome to GeovaX
+              </h2>
+              <p style={{ margin: '10px 0 0 0', opacity: 0.9, fontSize: '0.95rem' }}>
+                The Enterprise Web-GIS & Land Administration Platform
+              </p>
+            </div>
+            
+            <div style={{ padding: '30px' }}>
+              <h3 style={{ marginTop: 0, color: '#1b1b1b', fontSize: '1.1rem' }}>How to navigate this prototype:</h3>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '20px' }}>
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                  <div style={{ background: '#e1f3f8', color: '#005ea2', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', flexShrink: 0 }}>1</div>
+                  <div>
+                    <div style={{ fontWeight: 700, color: '#1a4480' }}>Click any Parcel to Inspect</div>
+                    <div style={{ fontSize: '0.85rem', color: '#565c65', marginTop: '4px' }}>Clicking a polygon on the map instantly opens the <strong>LADM Inspector</strong> and <strong>Per-Vertex Audit Lineage</strong> on the right.</div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                  <div style={{ background: '#e1f3f8', color: '#005ea2', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', flexShrink: 0 }}>2</div>
+                  <div>
+                    <div style={{ fontWeight: 700, color: '#1a4480' }}>Toggle Advanced AI Layers</div>
+                    <div style={{ fontSize: '0.85rem', color: '#565c65', marginTop: '4px' }}>Use the <strong>Floating Control Panel</strong> on the map to overlay Bi-Temporal Encroachment Flags and PM GatiShakti NMP Utilities.</div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                  <div style={{ background: '#e1f3f8', color: '#005ea2', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', flexShrink: 0 }}>3</div>
+                  <div>
+                    <div style={{ fontWeight: 700, color: '#1a4480' }}>Resolve Judicial Conflicts</div>
+                    <div style={{ fontSize: '0.85rem', color: '#565c65', marginTop: '4px' }}>Check the <strong>Adjudication Queue</strong> in the left sidebar to view active e-Courts Injunctions blocking Patta mutation.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: '30px', textAlign: 'center' }}>
+                <button 
+                  onClick={() => setShowWelcome(false)}
+                  style={{
+                    background: '#005ea2', color: '#ffffff', border: 'none', padding: '12px 32px', 
+                    fontSize: '1rem', fontWeight: 700, borderRadius: '6px', cursor: 'pointer',
+                    boxShadow: '0 4px 10px rgba(0, 94, 162, 0.3)'
+                  }}
+                >
+                  Start Exploring
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* 1. DEEP INTERACTIVE JUDICIAL CASE MODAL */}

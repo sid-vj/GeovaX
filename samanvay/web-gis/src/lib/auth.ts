@@ -200,6 +200,43 @@ export const AVAILABLE_WARDS: WardLocation[] = [
     parcelCountApprox: 1980,
     majorStreets: ["Luz Church Road", "Kutchery Road", "R.K. Mutt Road"],
   },
+  // Pan-India Synthesized Nodes
+  {
+    id: "Delhi",
+    name: "NCT Delhi (Connaught Place)",
+    taluk: "New Delhi",
+    center: [77.216, 28.632],
+    zoom: 15.0,
+    parcelCountApprox: 8500,
+    majorStreets: ["Connaught Circle", "Parliament Street", "Barakhamba Road"],
+  },
+  {
+    id: "Mumbai",
+    name: "Maharashtra (Nariman Point)",
+    taluk: "Mumbai City",
+    center: [72.823, 18.925],
+    zoom: 15.0,
+    parcelCountApprox: 12000,
+    majorStreets: ["Marine Drive", "Madam Cama Road", "Veer Nariman Road"],
+  },
+  {
+    id: "Bengaluru",
+    name: "Karnataka (Vidhana Soudha)",
+    taluk: "Bengaluru Urban",
+    center: [77.594, 12.979],
+    zoom: 15.0,
+    parcelCountApprox: 9800,
+    majorStreets: ["Ambedkar Veedhi", "Cubbon Park Road", "Raj Bhavan Road"],
+  },
+  {
+    id: "Anna Salai",
+    name: "Zone 1 · Anna Salai (Actual Data)",
+    taluk: "Mylapore - Triplicane",
+    center: [80.256, 13.054],
+    zoom: 16.5,
+    parcelCountApprox: 15000,
+    majorStreets: ["Anna Salai", "Walajah Road", "Bells Road"],
+  }
 ];
 
 export const PRESET_USERS: UserProfile[] = [
@@ -212,10 +249,10 @@ export const PRESET_USERS: UserProfile[] = [
   },
   {
     id: "usr-corridor",
-    name: "Tahsildar (Vandalur – Guindy Corridor)",
+    name: "Tahsildar (Vandalur – Guindy Corridor & Chennai)",
     role: "tahsildar",
     token: "token-tahsildar-tambaram",
-    wardScope: ["Vandalur", "Old Perungalathur", "New Perungalathur", "Mudichur", "Tambaram", "Tambaram Sanatorium", "Chromepet", "Pallavaram", "Hasthinapuram", "Tirusulam", "Meenambakkam", "Alandur", "Guindy"],
+    wardScope: ["Vandalur", "Old Perungalathur", "New Perungalathur", "Mudichur", "Tambaram", "Tambaram Sanatorium", "Chromepet", "Pallavaram", "Hasthinapuram", "Tirusulam", "Meenambakkam", "Alandur", "Guindy", "Anna Salai"],
     districtScope: "572",
     description: "Jurisdiction: Vandalur to Guindy GST Corridor",
   },

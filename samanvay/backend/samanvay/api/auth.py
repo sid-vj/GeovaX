@@ -87,6 +87,15 @@ MOCK_USERS: dict[str, UserClaims] = {
         subdistrict_lgd="057102",
         allowed_wards=["120", "121", "122", "Mylapore", "Alwarpet"],
     ),
+    "token-tahsildar-tambaram": UserClaims(
+        user_id="usr-150",
+        username="tahsildar_tambaram",
+        roles=[Role.TAHSILDAR, Role.SURVEY_OFFICER],
+        state_lgd="33",
+        district_lgd="572",
+        subdistrict_lgd="057201",
+        allowed_wards=["Vandalur", "Old Perungalathur", "New Perungalathur", "Mudichur", "Tambaram", "Tambaram Sanatorium", "Chromepet", "Pallavaram", "Hasthinapuram", "Tirusulam", "Meenambakkam", "Alandur", "Guindy", "Anna Salai", "Chennai"],
+    ),
     "token-citizen": UserClaims(
         user_id="usr-citizen-999",
         username="citizen_public",
