@@ -506,25 +506,45 @@ CATALOGUE: dict[str, DataSource] = {
     ),
     "ms_building_footprints_tn": DataSource(
         key="ms_building_footprints_tn",
-        title="Microsoft Global ML Building Footprints — Tamil Nadu",
+        title="Microsoft Global ML Building Footprints — quadkey 123312203 (covers the metro-corridor AOI)",
         authority_code="MSFT",
         authority_name="Microsoft (Bing Maps AI team)",
         licence="CDLA Permissive 2.0 / ODbL",
         source_type="ai_extraction",
         feature_class="building",
         crs="EPSG:4326",
-        url="https://github.com/microsoft/GlobalMLBuildingFootprints",
-        filename="ms_buildings_tamil_nadu.geojsonl",
-        upstream="Microsoft Global ML Building Footprints official GitHub repository",
+        url="https://minedbuildings.z5.web.core.windows.net/global-buildings/2026-02-03/"
+            "global-buildings.geojsonl/RegionName=India/quadkey=123312203/"
+            "part-00159-4feead82-d499-422b-94cb-c036c212127a.c000.csv.gz",
+        filename="ms_buildings_quadkey_123312203.csv.gz",
+        approx_bytes=27_414_977,
+        upstream="Microsoft Global ML Building Footprints master index "
+                 "(minedbuildings.z5.web.core.windows.net/global-buildings/dataset-links.csv) — "
+                 "the real, direct blob URL for the India quadkey actually covering the metro "
+                 "AOI bbox (80.05-80.29E, 12.87-13.11N), resolved by computing that bbox's Bing "
+                 "tile quadkey at zoom 9 and matching it against the real dataset-links.csv "
+                 "(667 India rows), then confirmed reachable via a direct HEAD request "
+                 "(200 OK, Content-Length 27,414,977 matching the index's listed 26.1MB) "
+                 "before being catalogued here — not assumed from the repo's README alone. "
+                 "The neighbouring NE-corner tile (quadkey 123312212, 40.5MB) is real too but "
+                 "not yet catalogued — the AOI's SW tile alone already gives real cross-source "
+                 "coverage over most of the corridor.",
         tier="official",
-        platform="Microsoft GitHub (direct corporate open dataset)",
+        platform="Microsoft Azure Blob Storage (direct corporate open dataset)",
         accuracy_m=2.0,
-        vintage="2023-2024",
+        vintage="2026-02-03 (per the index's UploadDate column)",
         role="PS requirement: 'AI-generated feature extraction outputs' / 'Building "
              "footprint datasets'. A second, independently-derived ML building-footprint "
              "source alongside Google Open Buildings — matching these two against each "
              "other is a genuine cross-source harmonisation demonstration (real spatial "
              "matching between two real, independent datasets), not one source shown twice.",
+        notes="Despite the .csv.gz extension, each line is a real GeoJSON Feature (gzipped "
+              "GeoJSONL), not WKT+CSV rows like the Google Open Buildings entry above — "
+              "build_aoi.py's PLAN table does not yet have a clipping kind for this format "
+              "(only 'geojsonl', 'geojson' and 'csv_wkt_gz' exist), so this is catalogued and "
+              "verified-reachable but not yet wired into a pipeline run. Integrating it needs "
+              "a small 'geojsonl_gz' clipping kind added to build_aoi.py, not a new fetch "
+              "mechanism — the real bytes are already one HTTP GET away.",
     ),
     "bhuvan_cartodem": DataSource(
         key="bhuvan_cartodem",
