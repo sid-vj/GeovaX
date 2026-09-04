@@ -93,6 +93,23 @@ export default function WebGISPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Real auto-harmonized/queued split from the actual pipeline run (stages.resolve in
+  // /api/run's metrics.json), replacing what was a hardcoded 87%/13% regardless of what
+  // the pipeline actually produced.
+  const [resolveStats, setResolveStats] = useState<{ autoPct: number; queuedPct: number } | null>(null);
+  useEffect(() => {
+    fetch('http://127.0.0.1:8000/api/run')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const resolve = d?.stages?.resolve;
+        if (resolve && typeof resolve.entities === 'number' && resolve.entities > 0) {
+          const queuedPct = (resolve.escalated / resolve.entities) * 100;
+          setResolveStats({ autoPct: 100 - queuedPct, queuedPct });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -311,9 +328,9 @@ export default function WebGISPage() {
     }
   };
 
-  // 8. Trigger GeoAI PyTorch SAM Extraction
+  // 8. Trigger GeoAI extraction (real classical-CV DSM extraction, or real SAM if configured)
   const handleTriggerGeoAI = async () => {
-    setGeoaiStatus(`Running OSIRIS AI & PyTorch SAM over ${selectedWard.name}...`);
+    setGeoaiStatus(`Running GeoAI extraction over ${selectedWard.name}...`);
     try {
       const res = await fetch('http://127.0.0.1:8000/api/ai/extract-footprints', {
         method: 'POST',
@@ -322,7 +339,18 @@ export default function WebGISPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        setGeoaiStatus(`Extracted ${data.extracted_count} building footprints via ${data.model} with 96.8% accuracy.`);
+        if (data.extracted_count > 0) {
+          const confidences = (data.features || []).map((f: any) => f.properties?.confidence).filter((c: any) => typeof c === 'number');
+          const meanConf = confidences.length ? (confidences.reduce((a: number, b: number) => a + b, 0) / confidences.length) : null;
+          setGeoaiStatus(`Extracted ${data.extracted_count} building footprints via ${data.model}` + (meanConf !== null ? ` (mean confidence ${(meanConf * 100).toFixed(1)}%).` : '.'));
+        } else {
+          // Honest: 0 real extractions means no DSM raster was found for this AOI, not
+          // that the AI ran and found nothing on real imagery. Surface the backend's own
+          // explanation rather than implying a false success.
+          setGeoaiStatus(data.note || `No structures extracted for ${selectedWard.name} (model: ${data.model}).`);
+        }
+      } else {
+        setGeoaiStatus(`GeoAI extraction failed (HTTP ${res.status}).`);
       }
     } catch (err) {
       setGeoaiStatus('GeoAI extraction failed.');
@@ -412,7 +440,7 @@ export default function WebGISPage() {
           meanConfidence: count > 0 ? (totalConf / count).toFixed(4) : '0.00',
           gradeCounts: grades,
           conflicts: conflictsCount,
-          litigationCount: wardCourtCases.length || Math.max(1, Math.round(count * 0.16)),
+          litigationCount: wardCourtCases.length,
           builtUpAreaM2: builtUp,
         });
 
@@ -462,21 +490,27 @@ export default function WebGISPage() {
             maxzoom: 19,
           },
           // Dark Cybernetic Tactical Grid
+          // Was CartoDB dark_all — Carto discontinued anonymous/keyless access to this
+          // service; every tile now returns a static "API KEY REQUIRED" watermark image
+          // instead of a map (verified directly: every coordinate returns the identical
+          // 5,355-byte placeholder PNG). Replaced with Esri's Dark Gray Canvas, a real,
+          // free, no-key-required raster service — same provider as the already-working
+          // satellite/labels layers below, so no new external dependency is introduced.
           'osiris-dark': {
             type: 'raster',
             tiles: [
-              'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
-              'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+              'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
             ],
             tileSize: 256,
-            maxzoom: 19,
+            maxzoom: 16,
           },
           // Detailed Voyager Street Grid
+          // Was CartoDB Voyager — same discontinued-anonymous-access issue as dark_all
+          // above. Replaced with Esri's World Street Map, real and free.
           'osiris-streets': {
             type: 'raster',
             tiles: [
-              'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
-              'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
+              'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
             ],
             tileSize: 256,
             maxzoom: 19,
@@ -1285,10 +1319,10 @@ export default function WebGISPage() {
               <span style={{ color: '#d83933', fontWeight: 700 }}>Human Review</span>
             </div>
             <div style={{ height: '6px', background: '#d83933', borderRadius: '3px', overflow: 'hidden', display: 'flex', width: '100%' }}>
-              <div style={{ width: '87%', background: '#00a91c' }}></div>
+              <div style={{ width: `${resolveStats ? resolveStats.autoPct.toFixed(0) : 0}%`, background: '#00a91c' }}></div>
             </div>
             <div style={{ fontSize: '0.65rem', color: '#565c65', marginTop: '2px' }}>
-              <strong>87%</strong> auto-harmonized. <strong>13%</strong> queued.
+              <strong>{resolveStats ? resolveStats.autoPct.toFixed(1) : '—'}%</strong> auto-harmonized. <strong>{resolveStats ? resolveStats.queuedPct.toFixed(1) : '—'}%</strong> queued.
             </div>
           </div>
 
@@ -1578,12 +1612,12 @@ export default function WebGISPage() {
                       <span style={{ color: '#d83933', fontWeight: 700 }}>Human Review</span>
                     </div>
                     <div style={{ height: '8px', background: '#d83933', borderRadius: '4px', overflow: 'hidden', display: 'flex' }}>
-                      <div style={{ width: '87%', background: '#00a91c' }}></div>
+                      <div style={{ width: `${resolveStats ? resolveStats.autoPct.toFixed(0) : 0}%`, background: '#00a91c' }}></div>
                     </div>
                   </div>
                 </div>
                 <div style={{ fontSize: '0.7rem', color: '#565c65', marginTop: '6px' }}>
-                  <strong>87%</strong> of parcels automatically harmonized via Graph-Based Matching. <strong>13%</strong> queued for manual adjudication.
+                  <strong>{resolveStats ? resolveStats.autoPct.toFixed(1) : '—'}%</strong> of parcels automatically harmonized via Graph-Based Matching. <strong>{resolveStats ? resolveStats.queuedPct.toFixed(1) : '—'}%</strong> queued for manual adjudication.
                 </div>
               </div>
 
@@ -1678,7 +1712,7 @@ export default function WebGISPage() {
                   <div style={{ border: '1px solid #dfe1e2', borderRadius: '4px', fontSize: '0.78rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', borderBottom: '1px solid #dfe1e2', background: '#f8f9fa' }}>
                       <span style={{ color: '#565c65' }}>Street / Location:</span>
-                      <strong>{selectedParcel.street_name || 'Main Corridor'}</strong>
+                      <strong>{selectedParcel.street_name || 'Not recorded (cadastral survey has no street attribute)'}</strong>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 8px', borderBottom: '1px solid #dfe1e2' }}>
                       <span style={{ color: '#565c65' }}>Revenue Village:</span>
@@ -1703,37 +1737,45 @@ export default function WebGISPage() {
                     <div style={{ padding: '6px 8px', background: '#f0f4f8' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                         <span style={{ color: '#565c65' }}>LA_BAUnit:</span>
-                        <strong style={{ fontFamily: 'monospace' }}>{selectedParcel.ladm_ba_unit || 'BAU_PENDING'}</strong>
+                        <strong style={{ fontFamily: 'monospace' }}>{selectedParcel.ulpin || 'Not assigned'}</strong>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                         <span style={{ color: '#565c65' }}>LA_SpatialUnit:</span>
-                        <strong style={{ fontFamily: 'monospace' }}>{selectedParcel.ladm_spatial_unit || 'SU_PENDING'}</strong>
+                        <strong style={{ fontFamily: 'monospace' }}>{selectedParcel.entity_id || 'Not assigned'}</strong>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                         <span style={{ color: '#565c65' }}>LA_RRR:</span>
-                        <strong>{selectedParcel.ladm_rrr || 'Right(Freehold)'}</strong>
+                        <strong>{selectedParcel.tenure_type || 'Not recorded in source data'}</strong>
                       </div>
                     </div>
-                    
+
                     <div style={{ background: '#e1f3f8', borderTop: '1px solid #c9e4eb', padding: '6px 8px' }}>
                       <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#005ea2', marginBottom: '4px' }}>⏳ Bi-Temporal Cadastre Versioning</div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
                         <span style={{ color: '#565c65' }}>Valid Time:</span>
-                        <strong>{selectedParcel.valid_time_start || '2018-05-12T00:00:00Z'}</strong>
+                        <strong>{selectedParcel.survey_date || 'Not recorded'}</strong>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <span style={{ color: '#565c65' }}>Transaction Time:</span>
-                        <strong>{selectedParcel.transaction_time || '2024-03-01T14:30:22Z'}</strong>
+                        <strong>{selectedParcel.last_mutation_date || 'Not recorded'}</strong>
                       </div>
                     </div>
 
                     <div style={{ background: '#fff9e6', borderTop: '1px solid #ffe699', padding: '6px 8px' }}>
                       <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#8c5b00', marginBottom: '4px' }}>🔍 Per-Vertex Audit Lineage</div>
                       <div style={{ color: '#565c65', fontSize: '0.7rem' }}>
-                        Vertex 1: <strong>SoI CORS ({selectedParcel.vertex_uncertainty_cm?.[0] || 5}cm)</strong><br />
-                        Vertex 2: <strong>SoI CORS ({selectedParcel.vertex_uncertainty_cm?.[1] || 12}cm)</strong><br />
-                        Vertex 3: <strong>SWAMITVA Drone ORI ({selectedParcel.vertex_uncertainty_cm?.[2] || 18}cm)</strong><br />
-                        Vertex 4: <strong>DILRMP FMB Archive ({selectedParcel.vertex_uncertainty_cm?.[3] || 80}cm)</strong><br />
+                        {/* Real per-vertex uncertainty is not produced anywhere in this pipeline —
+                            only a real, single positional-confidence component per parcel
+                            (conf_positional) exists. Falls back to "N/A" rather than a specific
+                            invented number/source, which is what this previously always showed
+                            for every parcel regardless of its real data. */}
+                        Vertex 1: <strong>SoI CORS ({selectedParcel.vertex_uncertainty_cm?.[0] ?? 'N/A'})</strong><br />
+                        Vertex 2: <strong>SoI CORS ({selectedParcel.vertex_uncertainty_cm?.[1] ?? 'N/A'})</strong><br />
+                        Vertex 3: <strong>SWAMITVA Drone ORI ({selectedParcel.vertex_uncertainty_cm?.[2] ?? 'N/A'})</strong><br />
+                        Vertex 4: <strong>DILRMP FMB Archive ({selectedParcel.vertex_uncertainty_cm?.[3] ?? 'N/A'})</strong><br />
+                      </div>
+                      <div style={{ color: '#8c5b00', fontSize: '0.65rem', marginTop: '4px' }}>
+                        Positional confidence (real, from the harmonisation run): <strong>{selectedParcel.conf_positional != null ? `${(selectedParcel.conf_positional * 100).toFixed(1)}%` : 'N/A'}</strong>
                       </div>
                     </div>
                   </div>

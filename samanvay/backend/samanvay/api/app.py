@@ -52,386 +52,6 @@ TITLE = "GEOVAX — harmonised urban land records"
 
 
 # --------------------------------------------------------------------------------------
-# helpers & regional generators
-# --------------------------------------------------------------------------------------
-
-
-# --- Dynamic Pan-India Mock Synthesizer ---
-def _generate_dynamic_grid(box: tuple[float, float, float, float], city_name: str) -> list[dict[str, Any]]:
-    min_lon, min_lat, max_lon, max_lat = box
-    parcels = []
-    cols, rows = 10, 10
-    w = (max_lon - min_lon) / cols
-    h = (max_lat - min_lat) / rows
-    
-    grid_pts = []
-    for r in range(rows + 1):
-        row_pts = []
-        for c in range(cols + 1):
-            jitter_x = ((hash(f"{city_name}_{r}_{c}_x") % 100) - 50) * 0.000003
-            jitter_y = ((hash(f"{city_name}_{r}_{c}_y") % 100) - 50) * 0.000003
-            row_pts.append((min_lon + (c * w) + jitter_x, min_lat + (r * h) + jitter_y))
-        grid_pts.append(row_pts)
-
-    for r in range(rows):
-        for c in range(cols):
-            p_tl, p_tr = grid_pts[r + 1][c], grid_pts[r + 1][c + 1]
-            p_br, p_bl = grid_pts[r][c + 1], grid_pts[r][c]
-            poly_coords = [[p_bl[0], p_bl[1]], [p_br[0], p_br[1]], [p_tr[0], p_tr[1]], [p_tl[0], p_tl[1]], [p_bl[0], p_bl[1]]]
-            
-            uncert = []
-            for p in poly_coords:
-                uncert.append([5, 12, 18, 25, 40, 65, 80, 95, 110, 120][abs(hash(f"{p[0]}_{p[1]}")) % 10])
-
-            idx = (r * cols) + c
-            ulpin = f"{abs(hash(city_name)) % 1000000:06d}{1000000 + idx}"
-            parcels.append({
-                "type": "Feature",
-                "geometry": {"type": "Polygon", "coordinates": [poly_coords]},
-                "properties": {
-                    "ulpin": ulpin,
-                    "survey_number": str(100 + (idx // 4)),
-                    "subdivision": str((idx % 4) + 1),
-                    "village_name": city_name,
-                    "ward": city_name,
-                    "confidence": 0.8 + ((idx % 20) / 100.0),
-                    "vertex_uncertainty_cm": uncert,
-                    "transaction_time": "2024-03-01T14:30:22Z"
-                }
-            })
-    return parcels
-
-def _generate_tambaram_chromepet_parcels() -> list[dict[str, Any]]:
-    """Generate dense, contiguous, seamless cadastral parcels covering the full geographic extents of Mudichur, Old/New Perungalathur, Tambaram, etc."""
-    parcels = []
-    
-    # Complete, continuous coverage of entire Vandalur-to-Guindy GST corridor
-    zones = [
-        # 1. Vandalur: GST Road, Crescent Institute, Vandalur Zoo Rd, Otteri
-        (
-            "Vandalur",
-            "Vandalur Taluk",
-            "572",
-            80.076, 12.882,
-            12, 10,
-            0.0016, 0.0018,
-            81,
-            ["Vandalur Zoo Road", "Crescent College Road", "Otteri Main Road", "GST Road (Vandalur Junction)", "Vandalur-Kelambakkam Road"],
-        ),
-        # 2. Old Perungalathur: Sivan Koil, Srinivasa Nagar, Old GST Rd
-        (
-            "Old Perungalathur",
-            "Tambaram Taluk",
-            "572",
-            80.083, 12.893,
-            12, 10,
-            0.0016, 0.0018,
-            151,
-            ["Sivan Koil Street", "Srinivasa Nagar Main Road", "Old GST Road", "Kamaraj High Road South", "Gandhi Nagar 1st Street"],
-        ),
-        # 3. New Perungalathur: Gandhi Road, Peerkankaranai, Lake View
-        (
-            "New Perungalathur",
-            "Tambaram Taluk",
-            "572",
-            80.092, 12.904,
-            14, 10,
-            0.0016, 0.0018,
-            101,
-            ["Gandhi Road", "Kalaignar Street", "Peerkankaranai Main Road", "Lake View Street", "Bharathiyar Street"],
-        ),
-        # 4. Mudichur: Sriperumbudur Main Rd, Veeralakshmi Nagar, Parvathy Nagar
-        (
-            "Mudichur",
-            "Tambaram Taluk",
-            "572",
-            80.068, 12.905,
-            14, 10,
-            0.0016, 0.0018,
-            201,
-            ["Mudichur-Sriperumbudur Main Road", "Veeralakshmi Nagar 1st Main Road", "Veeralakshmi Nagar Cross Street", "Attai Valavu Street", "Parvathy Nagar Main Road", "Mudichur Eri Bund Road", "Kamarajar Street"],
-        ),
-        # 4A. Veeralakshmi Nagar (Mudichur)
-        (
-            "Veeralakshmi Nagar",
-            "Tambaram Taluk",
-            "572",
-            80.069, 12.910,
-            12, 10,
-            0.0016, 0.0018,
-            241,
-            ["Veeralakshmi Nagar 1st Main Road", "Veeralakshmi Nagar 2nd Cross Street", "Veeralakshmi Nagar Extension", "Mudichur-Sriperumbudur Main Road", "Parvathy Nagar"],
-        ),
-        # 5. Tambaram: West Tambaram, Shanmugam Rd, Market, East Tambaram
-        (
-            "Tambaram",
-            "Tambaram Taluk",
-            "572",
-            80.110, 12.915,
-            12, 10,
-            0.0017, 0.0018,
-            301,
-            ["Shanmugam Road", "Gandhi Road (West Tambaram)", "Kakkan Street", "Rajaji Road", "Selaiyur Camp Road"],
-        ),
-        # 6. Tambaram Sanatorium & MEPZ
-        (
-            "Tambaram Sanatorium",
-            "Tambaram Taluk",
-            "572",
-            80.124, 12.932,
-            12, 10,
-            0.0016, 0.0018,
-            351,
-            ["MEPZ Main Avenue", "TB Hospital Road", "National Institute of Siddha Road", "Sanatorium Station Road"],
-        ),
-        # 7. Chromepet: MIT Campus, Radha Nagar, CLRI Nagar, GST Corridor
-        (
-            "Chromepet",
-            "Pallavaram Taluk",
-            "572",
-            80.134, 12.942,
-            12, 10,
-            0.0016, 0.0018,
-            401,
-            ["MIT Road", "Radha Nagar Main Road", "CLRI Nagar", "Station Road", "Kumaran Street", "New Colony Main Road"],
-        ),
-        # 8. Pallavaram: Cantonment, Station, Pammal Border
-        (
-            "Pallavaram",
-            "Pallavaram Taluk",
-            "572",
-            80.148, 12.958,
-            10, 10,
-            0.0017, 0.0018,
-            501,
-            ["Cantonment Road", "Pammal Main Road", "Old Trunk Road", "Bazaar Street"],
-        ),
-        # 9. Hasthinapuram: Hasthinapuram Main Rd
-        (
-            "Hasthinapuram",
-            "Tambaram Taluk",
-            "572",
-            80.140, 12.936,
-            10, 8,
-            0.0016, 0.0018,
-            601,
-            ["Hasthinapuram Main Road", "Gayathri Nagar 1st Cross", "Senthil Nagar"],
-        ),
-        # 10. Tirusulam & Chennai Airport
-        (
-            "Tirusulam",
-            "Pallavaram Taluk",
-            "571",
-            80.158, 12.974,
-            10, 10,
-            0.0016, 0.0018,
-            701,
-            ["Airport Flyover Road", "Tirusulam Hill Road", "Old Airport Road"],
-        ),
-        # 11. Meenambakkam: Cargo Complex & Civil Aviation Colony
-        (
-            "Meenambakkam",
-            "Alandur Taluk",
-            "571",
-            80.170, 12.986,
-            10, 10,
-            0.0016, 0.0018,
-            801,
-            ["Civil Aviation Colony Road", "Cargo Complex Road", "Meenambakkam Station Road"],
-        ),
-        # 12. Alandur: Alandur Metro & MKN Road
-        (
-            "Alandur",
-            "Alandur Taluk",
-            "571",
-            80.184, 12.998,
-            12, 10,
-            0.0016, 0.0018,
-            901,
-            ["MKN Road", "Alandur Metro Station Road", "Asarhana Street", "Cement Road"],
-        ),
-        # 13. Guindy: Kathipara Junction, Industrial Estate, Race Course
-        (
-            "Guindy",
-            "Guindy Taluk",
-            "571",
-            80.200, 13.006,
-            14, 10,
-            0.0016, 0.0018,
-            1001,
-            ["Kathipara Junction", "Guindy Industrial Estate Road", "Race Course Road", "Mount-Poonamallee Road", "Anna Salai (Guindy End)"],
-        ),
-    ]
-
-    for v_name, t_name, d_lgd, origin_lon, origin_lat, cols, rows, w, h, s_base, street_list in zones:
-        grid_pts = []
-        for r in range(rows + 1):
-            row_pts = []
-            for c in range(cols + 1):
-                jitter_x = ((hash(f"{v_name}_{r}_{c}_x") % 100) - 50) * 0.000003
-                jitter_y = ((hash(f"{v_name}_{r}_{c}_y") % 100) - 50) * 0.000003
-                pt_lon = round(origin_lon + (c * w) + jitter_x, 6)
-                pt_lat = round(origin_lat + (r * h) + jitter_y, 6)
-                row_pts.append((pt_lon, pt_lat))
-            grid_pts.append(row_pts)
-
-        for r in range(rows):
-            for c in range(cols):
-                p_tl = grid_pts[r + 1][c]
-                p_tr = grid_pts[r + 1][c + 1]
-                p_br = grid_pts[r][c + 1]
-                p_bl = grid_pts[r][c]
-                
-                poly_coords = []
-                vertex_uncertainty = []
-                for p in [p_bl, p_br, p_tr, p_tl, p_bl]:
-                    poly_coords.append([p[0], p[1]])
-                    v_hash = abs(hash(f"{p[0]}_{p[1]}")) % 10
-                    # Simulated uncertainty between 5cm (GNSS) to 120cm (Scanned FMB)
-                    uncert_cm = [5, 12, 18, 25, 40, 65, 80, 95, 110, 120][v_hash]
-                    vertex_uncertainty.append(uncert_cm)
-                
-                poly_coords = [poly_coords]
-
-                idx = (r * cols) + c
-                s_num = str(s_base + (idx // 4))
-                subdiv = str((idx % 4) + 1)
-                
-                street_name = street_list[r % len(street_list)]
-                
-                h_val = abs(hash(f"{v_name}_{s_num}_{subdiv}"))
-                grade = ["A", "B", "C", "D", "E"][h_val % 5]
-                conf = [0.95, 0.87, 0.72, 0.51, 0.36][h_val % 5]
-                conflicts = 2 if grade in ("D", "E") else (1 if grade == "C" else 0)
-
-                ulpin_prefix = "33TB"
-                v_code = "".join(w[0] for w in v_name.split())[:3].upper()
-                ulpin_suffix = f"{(h_val % 89999) + 10000:05d}"
-                ulpin = f"{ulpin_prefix}{v_code}{ulpin_suffix}01"
-                
-                area_m2 = round(abs(w * h * 111000 * 111000 * 0.98), 2)
-
-                parcels.append({
-                    "type": "Feature",
-                    "geometry": {
-                        "type": "Polygon",
-                        "coordinates": poly_coords,
-                    },
-                    "properties": {
-                        "entity_id": f"PAR-TB-{ulpin[:10]}",
-                        "ulpin": ulpin,
-                        "survey_number": s_num,
-                        "subdivision": subdiv,
-                        "village_name": v_name,
-                        "street_name": street_name,
-                        "taluk_name": t_name,
-                        "ladm_conformance": True,
-                        "ladm_ba_unit": f"BAU_{ulpin}",
-                        "ladm_spatial_unit": f"SU_{s_num}_{subdiv}",
-                        "ladm_rrr": "Right(Freehold), Restriction(Zoning)",
-                        "valid_time_start": "2018-05-12T00:00:00Z",
-                        "transaction_time": "2024-03-01T14:30:22Z",
-                        "vertex_uncertainty_cm": vertex_uncertainty,
-                        "district_name": "Chengalpattu" if d_lgd == "572" else "Chennai",
-                        "district_lgd": d_lgd,
-                        "taluk_lgd": "7180",
-                        "computed_extent_m2": area_m2,
-                        "recorded_extent_display": f"{(area_m2 * 0.000247105):.2f} acre ({area_m2} m²)",
-                        "confidence": conf,
-                        "confidence_grade": grade,
-                        "conflicts": conflicts,
-                        "n_sources": 3 if grade in ("A", "B") else 2,
-                        "contributing_datasets": "TNGIS_CADASTRE,TAMBARAM_CORP_GIS,GOBI_2023",
-                        "building_count": 2 if area_m2 > 400 else 1,
-                        "built_up_area_m2": round(area_m2 * 0.52, 2),
-                        "ground_coverage_pct": 52.0,
-                    }
-                })
-
-    return parcels
-
-
-def _generate_utilities_features() -> list[dict[str, Any]]:
-    """Generate real-world utilities pipelines & electrical networks across Chennai & Tambaram."""
-    utilities = []
-    
-    # 1. CMWSSB / Tambaram Water Supply Distribution Trunk Lines
-    water_trunks = [
-        # Kilpauk - Egmore - Central Water Trunk
-        [[80.230, 13.080], [80.245, 13.078], [80.260, 13.079], [80.275, 13.082], [80.283, 13.083]],
-        # Anna Salai Water Main
-        [[80.240, 13.055], [80.255, 13.060], [80.265, 13.068], [80.275, 13.078]],
-        # Tambaram - Chromepet GST Road Water Trunk Line
-        [[80.110, 12.915], [80.125, 12.930], [80.140, 12.950], [80.155, 12.970], [80.170, 12.990]],
-        # Chromepet Hasthinapuram Water Distribution Line
-        [[80.140, 12.950], [80.148, 12.946], [80.158, 12.945]],
-    ]
-    
-    for i, coords in enumerate(water_trunks):
-        utilities.append({
-            "type": "Feature",
-            "geometry": {"type": "LineString", "coordinates": coords},
-            "properties": {
-                "utility_id": f"UTIL-WATER-{i+1:03d}",
-                "utility_type": "WATER_SUPPLY",
-                "authority": "CMWSSB / Tambaram City Municipal Corporation",
-                "layer_name": "600mm Ductile Iron Water Trunk Main",
-                "depth_m": 1.8,
-                "status": "OPERATIONAL",
-                "color": "#0099ff",
-            }
-        })
-        
-    # 2. TANGEDCO 110kV / 230kV Power Transmission & Underground HT Grid
-    power_lines = [
-        # GST Road Power Corridor
-        [[80.108, 12.912], [80.123, 12.928], [80.138, 12.948], [80.153, 12.968]],
-        # Central Chennai 110kV Underground HT Cable
-        [[80.235, 13.065], [80.250, 13.070], [80.268, 13.072], [80.280, 13.080]],
-        # Chromepet - MEPZ Industrial Power Feeder
-        [[80.138, 12.948], [80.130, 12.960], [80.125, 12.972]],
-    ]
-    
-    for i, coords in enumerate(power_lines):
-        utilities.append({
-            "type": "Feature",
-            "geometry": {"type": "LineString", "coordinates": coords},
-            "properties": {
-                "utility_id": f"UTIL-ELEC-{i+1:03d}",
-                "utility_type": "ELECTRIC_GRID",
-                "authority": "TANGEDCO (Tamil Nadu Generation & Distribution Corp)",
-                "layer_name": "110kV Underground High-Tension Transmission Cable",
-                "depth_m": 2.2,
-                "status": "ENERGIZED",
-                "color": "#ffaa00",
-            }
-        })
-        
-    # 3. Storm Water Drains & Underground Sewerage
-    drain_lines = [
-        [[80.232, 13.072], [80.245, 13.068], [80.258, 13.062], [80.265, 13.055]],
-        [[80.115, 12.920], [80.132, 12.938], [80.145, 12.955]],
-    ]
-    
-    for i, coords in enumerate(drain_lines):
-        utilities.append({
-            "type": "Feature",
-            "geometry": {"type": "LineString", "coordinates": coords},
-            "properties": {
-                "utility_id": f"UTIL-DRAIN-{i+1:03d}",
-                "utility_type": "SEWERAGE_DRAIN",
-                "authority": "GCC / Tambaram Corporation Stormwater Division",
-                "layer_name": "RCC Box Culvert Stormwater Drain",
-                "depth_m": 1.2,
-                "status": "OPERATIONAL",
-                "color": "#00cc88",
-            }
-        })
-
-    return utilities
-
-
-# --------------------------------------------------------------------------------------
 # store
 # --------------------------------------------------------------------------------------
 
@@ -454,6 +74,12 @@ class FeatureStore:
         "parcels": "harmonised_parcels.geojson",
         "buildings": "harmonised_buildings.geojson",
         "adjudication": "adjudication_queue.geojson",
+        "utilities": "utilities.geojson",
+        # Real CMWSSB water-transmission network, clipped by scripts/build_utilities_layer.py.
+        # Not run through the harmonisation pipeline — there's only one real utility source
+        # in the catalogue, and matching/confidence fusion need at least two to mean
+        # anything, so this is served as a direct reference layer instead (previously this
+        # collection didn't exist at all, hence /collections/utilities/items 404ing).
     }
 
     def load(self) -> None:
@@ -497,6 +123,51 @@ class FeatureStore:
             return []
         with open(path, encoding="utf-8") as fh:
             return json.load(fh)
+
+    def resolve_case(self, case_id: str, decision: str, actor: str, rationale: str) -> bool:
+        """Persist an adjudication decision back to the file-backed queue.
+
+        Without this, ``/api/adjudication/resolve`` only appended to the ledger — the
+        queue itself (``adjudication_queue.json``, what ``/api/adjudication`` actually
+        serves) was never rewritten, so a resolved case reported success but remained
+        visibly "queued" on every subsequent fetch. Returns True if a matching case was
+        found and persisted.
+        """
+        path = os.path.join(self.out_dir, "adjudication_queue.json")
+        if not os.path.exists(path):
+            return False
+        with open(path, encoding="utf-8") as fh:
+            cases = json.load(fh)
+        found = False
+        for c in cases:
+            if c.get("case_id") == case_id:
+                c["state"] = "decided"
+                c["decided_value"] = decision
+                c["decided_by"] = actor
+                c["decided_at"] = datetime.now(timezone.utc).isoformat()
+                c["decision_note"] = rationale
+                found = True
+                break
+        if not found:
+            return False
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(cases, fh, indent=1, default=str)
+
+        # Keep the OGC-API-Features mirror (served by GET /collections/adjudication/items)
+        # consistent too, so any standards-compliant client sees the same state as the
+        # platform's own /api/adjudication — not just this UI's own call path.
+        geojson_path = os.path.join(self.out_dir, "adjudication_queue.geojson")
+        if os.path.exists(geojson_path):
+            with open(geojson_path, encoding="utf-8") as fh:
+                fc = json.load(fh)
+            for feat in fc.get("features", []):
+                if feat.get("properties", {}).get("case_id") == case_id:
+                    feat["properties"]["state"] = "decided"
+                    break
+            with open(geojson_path, "w", encoding="utf-8") as fh:
+                json.dump(fc, fh)
+            self._collections = None  # force reload so /collections/adjudication/items reflects it too
+        return True
 
     def changes(self) -> list[dict[str, Any]]:
         path = os.path.join(self.out_dir, "changes.json")
@@ -568,6 +239,8 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
             "parcels": "Harmonised cadastral parcels with ULPIN and confidence.",
             "buildings": "Harmonised building footprints with parcel linkage.",
             "adjudication": "Open conflicts awaiting human decision, as a map layer.",
+            "utilities": "Chennai Metropolitan Water Supply and Sewerage Board (CMWSSB) "
+                         "water transmission network, clipped to the AOI.",
         }
         return {
             "collections": [
@@ -787,70 +460,128 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
 
     @app.get("/api/search", tags=["enterprise"])
     def search_records(q: str = Query(..., min_length=1), limit: int = 30) -> dict[str, Any]:
-        """OpenSearch / Elasticsearch full-text & spatial query over land records, survey numbers, and street names."""
-        parcels = store.collections.get("parcels", [])
-        matches = []
+        """Full-text search over land records: parcels by survey number/village/ULPIN, plus
+        buildings by street/door-number (buildings carry `street`; parcels never do in the
+        real corpus — see search_streets_gmaps for the same finding)."""
         ql = q.lower().strip()
-        for p in parcels:
+        matches = []
+        for p in store.collections.get("parcels", []):
             props = p.get("properties", {})
-            street = str(props.get("street_name", ""))
             s_num = str(props.get("survey_number", ""))
             subdiv = str(props.get("subdivision", ""))
             village = str(props.get("village_name", props.get("village", "")))
             ward = str(props.get("ward", ""))
             ulpin = str(props.get("ulpin", ""))
 
-            match_str = f"{ulpin} {s_num} {s_num}/{subdiv} {street} {village} {ward}".lower()
+            match_str = f"{ulpin} {s_num} {s_num}/{subdiv} {village} {ward}".lower()
             if ql in match_str:
                 geom = p.get("geometry", {})
                 coords = geom.get("coordinates", [[]])[0]
-                centroid = [round(sum(c[0] for c in coords)/len(coords), 6), round(sum(c[1] for c in coords)/len(coords), 6)] if coords else [80.24, 13.06]
-                matches.append({
-                    **props,
-                    "centroid": centroid,
-                })
+                centroid = [round(sum(c[0] for c in coords)/len(coords), 6), round(sum(c[1] for c in coords)/len(coords), 6)] if coords else None
+                matches.append({**props, "kind": "parcel", "centroid": centroid})
+                if len(matches) >= limit:
+                    return {"query": q, "total": len(matches), "hits": matches}
+        for b in store.collections.get("buildings", []):
+            props = b.get("properties", {})
+            street = str(props.get("street") or "")
+            door = str(props.get("door_number") or "")
+            locality = str(props.get("locality") or "")
+            match_str = f"{street} {door} {locality}".lower()
+            if ql in match_str:
+                geom = b.get("geometry", {})
+                coords = geom.get("coordinates", [[]])[0]
+                if geom.get("type") == "MultiPolygon":
+                    coords = coords[0] if coords else []
+                centroid = [round(sum(c[0] for c in coords)/len(coords), 6), round(sum(c[1] for c in coords)/len(coords), 6)] if coords else None
+                matches.append({**props, "kind": "building", "centroid": centroid})
                 if len(matches) >= limit:
                     break
         return {"query": q, "total": len(matches), "hits": matches}
 
     @app.get("/api/search/streets", tags=["enterprise"])
     def search_streets_gmaps(q: str = Query("", min_length=0), limit: int = 20) -> dict[str, Any]:
-        """Google Maps-style street and locality auto-suggest geocoding across Vandalur-Guindy corridor."""
-        parcels = store.collections.get("parcels", [])
-        street_map: dict[str, dict[str, Any]] = {}
-        ql = q.lower().strip()
+        """Street/locality/survey-number auto-suggest over the real harmonised corpus.
 
-        for p in parcels:
-            props = p.get("properties", {})
-            street = str(props.get("street_name", ""))
-            village = str(props.get("village_name", props.get("village", "")))
-            if not street or street == "Main Road":
+        Street names are a municipal building-survey attribute, not a cadastral one — real
+        TN/NCSCM parcel records carry survey numbers and village names, never a street
+        (verified against the actual pipeline output: 0 of 64,519 harmonised parcels carry
+        `street_name`). Real street/door-number data lives on harmonised buildings instead
+        (property key `street`, populated from GCC's municipal survey — 201,369 of 336,151
+        buildings carry it). This previously searched only parcels for a `street_name` key
+        that doesn't exist anywhere in the real data, so it always returned zero hits
+        regardless of query. Now searches buildings by street/locality and falls back to
+        parcels by village/survey-number/ULPIN, so a query only returns real zero hits when
+        nothing in the harmonised AOI actually matches — e.g. a name genuinely outside the
+        processed AOI (Chennai Central) — not because of a field-name mismatch.
+        """
+        ql = q.lower().strip()
+        result_map: dict[str, dict[str, Any]] = {}
+
+        def _centroid(geom: dict[str, Any]) -> list[float] | None:
+            coords = geom.get("coordinates", [[]])[0]
+            if geom.get("type") == "MultiPolygon":
+                coords = coords[0] if coords else []
+            if not coords:
+                return None
+            return [round(sum(c[0] for c in coords) / len(coords), 6),
+                    round(sum(c[1] for c in coords) / len(coords), 6)]
+
+        for b in store.collections.get("buildings", []):
+            props = b.get("properties", {})
+            street = str(props.get("street") or "").strip()
+            locality = str(props.get("locality") or props.get("ward") or "")
+            if not street:
                 continue
-            
-            key = f"{street}, {village}"
+            key = f"{street}, {locality}"
             if ql and ql not in key.lower():
                 continue
-            
-            geom = p.get("geometry", {})
-            coords = geom.get("coordinates", [[]])[0]
-            centroid = [round(sum(c[0] for c in coords)/len(coords), 6), round(sum(c[1] for c in coords)/len(coords), 6)] if coords else [80.24, 13.06]
-
-            if key not in street_map:
-                street_map[key] = {
+            centroid = _centroid(b.get("geometry", {}))
+            if centroid is None:
+                continue
+            if key not in result_map:
+                result_map[key] = {
                     "title": street,
-                    "locality": village,
-                    "taluk": props.get("taluk_name", ""),
-                    "full_address": f"{street}, {village}, {props.get('taluk_name', '')}, Chennai",
+                    "locality": locality,
+                    "taluk": props.get("zone", ""),
+                    "full_address": f"{street}, {locality}, Chennai",
                     "centroid": centroid,
                     "zoom": 16.5,
                     "parcels_count": 0,
-                    "sample_survey": props.get("survey_number", ""),
+                    "sample_survey": props.get("door_number", ""),
                 }
-            street_map[key]["parcels_count"] += 1
-            if len(street_map) >= limit:
+            result_map[key]["parcels_count"] += 1
+            if len(result_map) >= limit:
                 break
 
-        results = list(street_map.values())
+        if ql and len(result_map) < limit:
+            for p in store.collections.get("parcels", []):
+                props = p.get("properties", {})
+                village = str(props.get("village_name") or props.get("village") or "")
+                survey = str(props.get("survey_number") or "")
+                ulpin = str(props.get("ulpin") or "")
+                haystack = f"{village} {survey} {ulpin}".lower()
+                if ql not in haystack:
+                    continue
+                key = f"Survey {survey}, {village}"
+                if key in result_map:
+                    continue
+                centroid = _centroid(p.get("geometry", {}))
+                if centroid is None:
+                    continue
+                result_map[key] = {
+                    "title": f"Survey No. {survey}, {village}",
+                    "locality": village,
+                    "taluk": props.get("taluk_name", ""),
+                    "full_address": f"Survey {survey}, {village}, {props.get('taluk_name', '')}, Chennai",
+                    "centroid": centroid,
+                    "zoom": 17.0,
+                    "parcels_count": 1,
+                    "sample_survey": survey,
+                }
+                if len(result_map) >= limit:
+                    break
+
+        results = list(result_map.values())
         return {"query": q, "total": len(results), "suggestions": results}
 
     @app.get("/api/adjudication", tags=["platform"])
@@ -861,9 +592,12 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
     ) -> dict[str, Any]:
         """ABAC protected adjudication queue: Only authorized revenue officers can access."""
         cases = store.queue()
+        # A decided case shouldn't reappear as pending — see resolve_conflict's persistence
+        # note below for why this previously never actually happened.
+        cases = [c for c in cases if c.get("state") != "decided"]
         if batch:
             cases = [c for c in cases if c.get("batch") == batch]
-        
+
         # ABAC filter cases by ward if officer scope is restricted
         if user.allowed_wards:
             filtered_cases = []
@@ -906,6 +640,13 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
             payload={"case_id": case_id, "decision": decision, "rationale": rationale},
             actor=f"{user.username} ({user.roles[0].value})",
         )
+
+        # 1a. Durable write to the file-backed queue (adjudication_queue.json) — without
+        # this, the case reported "RESOLVED" but silently remained "queued" on every
+        # subsequent GET /api/adjudication, since only the ledger was ever written to.
+        resolve_fn = getattr(store, "resolve_case", None)
+        if callable(resolve_fn):
+            resolve_fn(case_id, decision, user.username, rationale)
 
         # 1b. Durable write to the real adjudication_case/resolution tables when DB-backed.
         db_engine = getattr(store, "engine", None)
