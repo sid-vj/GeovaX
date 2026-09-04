@@ -34,6 +34,9 @@ export default function WebGISPage() {
   const [copiedUlpin, setCopiedUlpin] = useState(false);
 
   const [adjudicationQueue, setAdjudicationQueue] = useState<any[]>([]);
+  // Real total matching count from /api/adjudication (unaffected by the `limit` page size),
+  // now bbox-filtered server-side — distinct from adjudicationQueue.length, which is capped.
+  const [adjudicationTotal, setAdjudicationTotal] = useState<number | null>(null);
   const [wardCourtCases, setWardCourtCases] = useState<any[]>([]);
   const [courtDataSource, setCourtDataSource] = useState<string | null>(null);
   const [ecDataSource, setEcDataSource] = useState<string | null>(null);
@@ -218,17 +221,25 @@ export default function WebGISPage() {
   }, []);
 
   // 2. Fetch Adjudication Queue
+  // Queued cases carry no ward/village field of their own — the backend's ?ward= param on
+  // this endpoint is a no-op it silently ignores — so real per-jurisdiction filtering is done
+  // by AOI bbox instead (same padding as the map's aoi-boundary layer), which the backend
+  // resolves against the adjudication OGC mirror's real geometry for each case_id.
   const fetchAdjudication = async (user: UserProfile, ward: WardLocation) => {
     try {
-      const wardParam = ward.id !== 'all' ? `&ward=${encodeURIComponent(ward.id)}` : '';
-      const res = await fetch(`http://127.0.0.1:8000/api/adjudication?limit=15${wardParam}`, {
+      const pad = ward.id === 'all' ? 0.08 : 0.012;
+      const [cx, cy] = ward.center;
+      const bboxParam = ward.id !== 'all' ? `&bbox=${cx - pad},${cy - pad},${cx + pad},${cy + pad}` : '';
+      const res = await fetch(`http://127.0.0.1:8000/api/adjudication?limit=15${bboxParam}`, {
         headers: { 'Authorization': `Bearer ${user.token}` },
       });
       if (res.ok) {
         const data = await res.json();
         setAdjudicationQueue(data.cases || []);
+        setAdjudicationTotal(typeof data.total === 'number' ? data.total : null);
       } else if (res.status === 403) {
         setAdjudicationQueue([]);
+        setAdjudicationTotal(null);
       }
     } catch (err) {
       console.error('Failed fetching adjudication queue', err);
@@ -800,6 +811,25 @@ export default function WebGISPage() {
       mapInstanceRef.current.setLayoutProperty('encroachment-line', 'visibility', encVis);
     }
   }, [showEncroachment]);
+
+  // Real multi-source contribution / provenance, aggregated client-side from the already-
+  // fetched wardParcels (each carries its own real contributing_datasets + n_sources from
+  // the pipeline's resolve stage — no separate fetch needed, no invented numbers).
+  const sourceContribution: Record<string, number> = {};
+  let corroborated = 0;
+  wardParcels.forEach((p: any) => {
+    const ds = String(p.contributing_datasets || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+    ds.forEach((s: string) => { sourceContribution[s] = (sourceContribution[s] || 0) + 1; });
+    if (Number(p.n_sources) > 1) corroborated++;
+  });
+
+  // Real AOI-wide match-stage summary (from /api/run's stages.match) — this ran once over
+  // the full pipeline AOI, not per ward, so it's presented as AOI-wide context.
+  const matchPairs: [string, any][] = runMetrics?.stages?.match ? Object.entries(runMetrics.stages.match) : [];
+  const topologyPairs: [string, any][] = runMetrics?.stages?.topology ? Object.entries(runMetrics.stages.topology) : [];
+  const reprojectPairs: [string, any][] = runMetrics?.stages?.reproject ? Object.entries(runMetrics.stages.reproject) : [];
+  const schemaMapPairs: [string, any][] = runMetrics?.stages?.schema_map ? Object.entries(runMetrics.stages.schema_map) : [];
+  const changePairs: [string, any][] = runMetrics?.stages?.change ? Object.entries(runMetrics.stages.change) : [];
 
   // Trigger update on Ward or User change
   useEffect(() => {
@@ -1644,17 +1674,192 @@ export default function WebGISPage() {
           {/* TAB 2: Comprehensive Ward Statistics */}
           {rightPanelTab === 'ward' && (
             <div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {/* Jurisdiction / AOI — real fields carried on the fetched parcels themselves */}
+              <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px', fontSize: '0.75rem' }}>
+                <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase', marginBottom: '4px', fontWeight: 700 }}>Selected Jurisdiction</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', rowGap: '2px', columnGap: '8px' }}>
+                  <span style={{ color: '#565c65' }}>Zone / Ward:</span><strong>{selectedWard.name}</strong>
+                  <span style={{ color: '#565c65' }}>Village:</span><strong>{wardParcels[0]?.village_name || '—'}</strong>
+                  <span style={{ color: '#565c65' }}>Taluk:</span><strong>{selectedWard.taluk}</strong>
+                  <span style={{ color: '#565c65' }}>District:</span><strong>{wardParcels[0]?.district_name || '—'}</strong>
+                  <span style={{ color: '#565c65' }}>AOI Center:</span><strong>{selectedWard.center[1].toFixed(4)}, {selectedWard.center[0].toFixed(4)}</strong>
+                </div>
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                 <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Surveyed Parcels</div>
+                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Harmonized Parcels</div>
                   <div style={{ fontSize: '1.3rem', fontWeight: 700, color: '#1a4480' }}>{wardStats.totalParcels.toLocaleString()}</div>
                 </div>
                 <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Total Land Extent</div>
-                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1a4480' }}>
-                    {(wardStats.totalAreaM2 / 10000).toFixed(2)} <span style={{ fontSize: '0.75rem' }}>hectares</span>
+                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Harmonized Buildings</div>
+                  <div style={{ fontSize: '1.3rem', fontWeight: 700, color: '#1a4480' }}>
+                    {wardBuildingCount === null ? '—' : wardBuildingCount.toLocaleString()}
                   </div>
                 </div>
+                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Total Land Extent</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#1a4480' }}>
+                    {(wardStats.totalAreaM2 / 10000).toFixed(2)} <span style={{ fontSize: '0.7rem' }}>ha</span>
+                  </div>
+                </div>
+                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Built-Up Area</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#1a4480' }}>
+                    {(wardStats.builtUpAreaM2 / 10000).toFixed(2)} <span style={{ fontSize: '0.7rem' }}>ha</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Data quality — real per-parcel confidence grades, aggregated client-side */}
+              <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
+                  📐 Data Quality — Confidence Distribution
+                </div>
+                <div style={{ fontSize: '0.75rem', marginBottom: '4px' }}>
+                  Mean confidence: <strong>{(parseFloat(wardStats.meanConfidence) * 100).toFixed(1)}%</strong> · Conflicts on record: <strong style={{ color: wardStats.conflicts > 0 ? '#d83933' : '#00a91c' }}>{wardStats.conflicts}</strong>
+                </div>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  {(['A', 'B', 'C', 'D', 'E'] as const).map((g) => (
+                    <div key={g} style={{ flex: 1, textAlign: 'center', background: '#eef1f5', borderRadius: '3px', padding: '3px 0' }}>
+                      <div style={{ fontSize: '0.65rem', color: '#565c65' }}>{g}</div>
+                      <div style={{ fontSize: '0.8rem', fontWeight: 700 }}>{wardStats.gradeCounts[g] || 0}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Multi-source contribution & provenance — real, aggregated from each parcel's
+                  own contributing_datasets/n_sources fields (pipeline's resolve stage) */}
+              <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
+                  🗂️ Source Datasets & Provenance
+                </div>
+                {Object.keys(sourceContribution).length === 0 ? (
+                  <div style={{ fontSize: '0.75rem', color: '#565c65' }}>No parcels loaded for this jurisdiction yet.</div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: '0.75rem', marginBottom: '6px' }}>
+                      <strong>{corroborated}</strong> of <strong>{wardParcels.length}</strong> parcels corroborated by 2+ independent sources ({wardParcels.length > 0 ? ((corroborated / wardParcels.length) * 100).toFixed(1) : '0.0'}%).
+                    </div>
+                    {Object.entries(sourceContribution).map(([src, n]) => (
+                      <div key={src} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', padding: '2px 0', borderTop: '1px solid #e6e6e6' }}>
+                        <span style={{ color: '#565c65' }}>{src}</span>
+                        <strong>{n.toLocaleString()} parcels</strong>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+
+              {/* Adjudication queue — real, ward-scoped fetch (fetchAdjudication) */}
+              <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
+                  ⚖️ Adjudication Queue (This Jurisdiction)
+                </div>
+                <div style={{ fontSize: '0.75rem' }}>
+                  <strong>{adjudicationTotal ?? adjudicationQueue.length}</strong> case{(adjudicationTotal ?? adjudicationQueue.length) === 1 ? '' : 's'} awaiting human review in {selectedWard.name}
+                  {adjudicationTotal !== null && adjudicationTotal > adjudicationQueue.length ? ` (${adjudicationQueue.length} loaded)` : ''}.
+                </div>
+              </div>
+
+              {/* AI building/feature extraction — reuses the real geoaiStatus set by the
+                  actual extraction call, never a separately invented value */}
+              {geoaiStatus && (
+                <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
+                    🛰️ AI Feature Extraction — Last Run
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#1b1b1b' }}>{geoaiStatus}</div>
+                </div>
+              )}
+
+              {/* AOI-wide real pipeline intelligence (/api/run) — one pipeline run over the
+                  whole AOI, not per-ward, so labeled accordingly and does not vary by selection */}
+              <div style={{ border: '1px solid #1a4480', borderRadius: '4px' }}>
+                <div style={{ background: '#1a4480', color: '#fff', padding: '6px 8px', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase' }}>
+                  🧬 AOI-Wide Pipeline Intelligence <span style={{ fontWeight: 400, opacity: 0.85 }}>(whole-AOI run, not per-ward)</span>
+                </div>
+                {!runMetrics ? (
+                  <div style={{ padding: '10px', fontSize: '0.75rem', color: '#565c65' }}>/api/run has not returned yet.</div>
+                ) : (
+                  <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.72rem' }}>
+                    {/* AI/ML spatial matching */}
+                    <div>
+                      <div style={{ fontWeight: 700, color: '#1a4480', marginBottom: '2px' }}>AI/ML Spatial Matching</div>
+                      {matchPairs.map(([pair, m]: [string, any]) => (
+                        <div key={pair} style={{ background: '#f4f6f9', borderRadius: '3px', padding: '5px', marginBottom: '4px' }}>
+                          <div style={{ fontWeight: 700 }}>{pair}</div>
+                          <div>{m.accepted?.toLocaleString()} accepted of {m.candidate_pairs?.toLocaleString()} candidate pairs</div>
+                          <div style={{ color: '#565c65' }}>{m.model}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Detected spatial offsets */}
+                    <div>
+                      <div style={{ fontWeight: 700, color: '#1a4480', marginBottom: '2px' }}>Detected Spatial Offsets</div>
+                      {matchPairs.map(([pair, m]: [string, any]) => (
+                        <div key={pair} style={{ background: '#f4f6f9', borderRadius: '3px', padding: '5px', marginBottom: '4px' }}>
+                          <div style={{ fontWeight: 700 }}>{pair}</div>
+                          <div>{m.registration}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Topology validation/correction */}
+                    <div>
+                      <div style={{ fontWeight: 700, color: '#1a4480', marginBottom: '2px' }}>Topology Validation &amp; Correction</div>
+                      {topologyPairs.map(([src, t]: [string, any]) => (
+                        <div key={src} style={{ background: '#f4f6f9', borderRadius: '3px', padding: '5px', marginBottom: '4px' }}>
+                          <div style={{ fontWeight: 700 }}>{src}</div>
+                          <div>{t.validation_before}</div>
+                          <div style={{ color: '#565c65' }}>{t.repair}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Attribute harmonization */}
+                    <div>
+                      <div style={{ fontWeight: 700, color: '#1a4480', marginBottom: '2px' }}>Attribute Harmonization (Schema Mapping)</div>
+                      {schemaMapPairs.map(([src, sm]: [string, any]) => (
+                        <div key={src} style={{ background: '#f4f6f9', borderRadius: '3px', padding: '5px', marginBottom: '4px' }}>
+                          <div style={{ fontWeight: 700 }}>{src}</div>
+                          <div>{sm.mapped} of {sm.columns} source columns mapped to the harmonised schema</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* CRS / georeferencing */}
+                    <div>
+                      <div style={{ fontWeight: 700, color: '#1a4480', marginBottom: '2px' }}>CRS / Coordinate Transformation</div>
+                      {reprojectPairs.map(([src, r]: [string, any]) => (
+                        <div key={src} style={{ background: '#f4f6f9', borderRadius: '3px', padding: '5px', marginBottom: '4px' }}>
+                          <span style={{ fontWeight: 700 }}>{src}:</span> {r.reprojected?.toLocaleString()} features reprojected to {r.target_crs}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Change detection */}
+                    <div>
+                      <div style={{ fontWeight: 700, color: '#1a4480', marginBottom: '2px' }}>Change Detection</div>
+                      {changesSummary && (
+                        <div style={{ background: '#f4f6f9', borderRadius: '3px', padding: '5px', marginBottom: '4px' }}>
+                          <div><strong>{changesSummary.total.toLocaleString()}</strong> total detected changes across the AOI</div>
+                          {Object.entries(changesSummary.counts).map(([ct, n]) => (
+                            <div key={ct} style={{ color: '#565c65' }}>{ct}: {n.toLocaleString()}</div>
+                          ))}
+                        </div>
+                      )}
+                      {changePairs.map(([pair, c]: [string, any]) => (
+                        <div key={pair} style={{ background: '#f4f6f9', borderRadius: '3px', padding: '5px', marginBottom: '4px' }}>
+                          <div style={{ fontWeight: 700 }}>{pair}</div>
+                          <div>{String(c)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* AI Active Learning Dashboard */}

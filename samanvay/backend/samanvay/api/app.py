@@ -588,6 +588,7 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
     def adjudication(
         limit: int = Query(50, ge=1, le=500),
         batch: str | None = None,
+        bbox: str | None = Query(None, description="minx,miny,maxx,maxy in CRS84 — filters to cases whose real geometry (from the adjudication OGC mirror) falls in this AOI"),
         user: UserClaims = Depends(require_roles(Role.TAHSILDAR, Role.SUPER_ADMIN, Role.DISTRICT_COLLECTOR, Role.SURVEY_OFFICER)),
     ) -> dict[str, Any]:
         """ABAC protected adjudication queue: Only authorized revenue officers can access."""
@@ -606,6 +607,21 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
                 if not c_ward or user.can_access_ward(c_ward):
                     filtered_cases.append(c)
             cases = filtered_cases
+
+        # Real per-jurisdiction filtering: queued cases carry no ward/village attribute of
+        # their own, but the adjudication OGC mirror (collections["adjudication"], served by
+        # /collections/adjudication/items) carries the real geometry for the same case_id.
+        # Join on that to filter by AOI bbox rather than fabricating a ward field.
+        box = _parse_bbox(bbox)
+        if box:
+            geoms_by_case = {
+                f.get("properties", {}).get("case_id"): f.get("geometry")
+                for f in store.collections.get("adjudication", [])
+            }
+            cases = [
+                c for c in cases
+                if _bbox_hit(_geom_bounds(geoms_by_case.get(c.get("case_id"))), box)
+            ]
 
         return {
             "total": len(cases),
