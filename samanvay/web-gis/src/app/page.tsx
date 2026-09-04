@@ -69,7 +69,7 @@ export default function WebGISPage() {
   const [wardQueryTime, setWardQueryTime] = useState<string | null>(null);
   const [accessAlert, setAccessAlert] = useState<string | null>(null);
   const [rightPanelTab, setRightPanelTab] = useState<'litigation' | 'ward' | 'parcel'>('litigation');
-  const [sidebarTab, setSidebarTab] = useState<'zones' | 'layers' | 'revenue'>('zones');
+  const [sidebarTab, setSidebarTab] = useState<'zones' | 'revenue'>('zones');
   const [showWelcome, setShowWelcome] = useState<boolean>(true);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -567,6 +567,18 @@ export default function WebGISPage() {
         initMap(maplibre);
       }
     }
+    // Without this, switching to the 3D toggle unmounted the container div but never
+    // destroyed the MapLibre instance/canvas inside it, so the honest "not available" 3D
+    // placeholder rendered in the DOM while the old 2D satellite canvas stayed visually on
+    // top of it — the toggle looked like it did nothing. Tearing the map down here so a
+    // later switch back to 2D also gets a clean re-init instead of a stale instance.
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+        if (typeof window !== 'undefined') (window as any).__geovaxMap = null;
+      }
+    };
   }, [viewMode]);
 
   const initMap = (maplibregl: any) => {
@@ -626,8 +638,11 @@ export default function WebGISPage() {
             maxzoom: 19,
           },
           parcels: {
+            // Starts empty — the real ward's parcels are loaded by updateMapData() right
+            // after mount (once auth is ready). Previously this fetched a hardcoded,
+            // unrelated ward (Veeralakshmi Nagar) regardless of the actual default selection.
             type: 'geojson',
-            data: `http://127.0.0.1:8000/collections/parcels/items?limit=15000&min_confidence=0&ward=Veeralakshmi%20Nagar`,
+            data: { type: 'FeatureCollection', features: [] },
           },
           utilities: {
             type: 'geojson',
@@ -810,6 +825,7 @@ export default function WebGISPage() {
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     mapInstanceRef.current = map;
+    if (typeof window !== 'undefined') (window as any).__geovaxMap = map;
 
     map.on('load', () => {
       // Data population is left to the [selectedWard, currentUser, authReady] effect,
@@ -997,7 +1013,7 @@ export default function WebGISPage() {
                 cursor: 'pointer',
               }}
             >
-              ⚖️ e-Courts Adjudication
+              ⚖️ Adjudication &amp; AI Tools
             </button>
           </div>
 
@@ -1079,7 +1095,7 @@ export default function WebGISPage() {
             </div>
           )}
 
-          {/* TAB CONTENT: DILRMP & e-Courts Adjudication */}
+          {/* TAB CONTENT: Conflict/Adjudication Queue & AI Rooftop Extraction */}
           {sidebarTab === 'revenue' && (
             <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
@@ -1087,7 +1103,9 @@ export default function WebGISPage() {
                   <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase' }}>
                     ⚖️ Conflict Queue ({selectedWard.id})
                   </span>
-                  <span style={{ fontSize: '0.7rem', color: '#565c65' }}>{adjudicationQueue.length} Cases</span>
+                  <span style={{ fontSize: '0.7rem', color: '#565c65' }}>
+                    {adjudicationTotal ?? adjudicationQueue.length} Cases{adjudicationTotal !== null && adjudicationTotal > adjudicationQueue.length ? ` (${adjudicationQueue.length} shown)` : ''}
+                  </span>
                 </div>
 
                 {currentUser.role === 'citizen' ? (
@@ -1455,9 +1473,12 @@ export default function WebGISPage() {
             </div>
           </div>
 
-          {/* Floating Action HUD: GeoAI Layer Toggles */}
+          {/* Floating Action HUD: GeoAI Layer Toggles.
+              bottom:88 (was 40) clears the horizontally-centered basemap switcher row below
+              (bottom:24, ~40px tall) — at bottom:40 the two floating panels overlapped and the
+              switcher's rightmost buttons (Voyager, 3D Mesh) were unclickable behind this one. */}
           <div style={{
-            position: 'absolute', bottom: 40, right: 10, zIndex: 20,
+            position: 'absolute', bottom: 88, right: 10, zIndex: 20,
             background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(8px)',
             borderRadius: '6px', border: '1px solid #dfe1e2', padding: '10px 14px',
             boxShadow: '0 4px 15px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: '8px'
@@ -1471,24 +1492,24 @@ export default function WebGISPage() {
               <input type="checkbox" checked={showGeoSatLayer} onChange={(e) => setShowGeoSatLayer(e.target.checked)} style={{ accentColor: '#005ea2' }} />
               <span style={{ fontWeight: 600, color: '#1b1b1b' }}>GeoSat Base Layer</span>
             </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer' }} title="Toggles Esri's real street/place reference tiles. No drone imagery is fetched for this AOI yet — see the Data Source Matrix in the Dossier tab.">
               <input type="checkbox" checked={showDroneLayer} onChange={(e) => setShowDroneLayer(e.target.checked)} style={{ accentColor: '#005ea2' }} />
-              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>High-Res Drone Imagery</span>
+              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>Street &amp; Place Labels (Esri reference)</span>
             </label>
 
             <hr style={{ margin: '2px 0', border: '0', borderTop: '1px solid #dfe1e2' }} />
 
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer' }} title="Real /api/analytics/encroachment check — currently empty because no public/poramboke land reference layer is configured for this AOI.">
               <input type="checkbox" checked={showEncroachment} onChange={(e) => setShowEncroachment(e.target.checked)} style={{ accentColor: '#d50000' }} />
-              <span style={{ fontWeight: 600, color: '#d50000' }}>Bi-Temporal Encroachments</span>
+              <span style={{ fontWeight: 600, color: '#d50000' }}>Bi-Temporal Encroachments <span style={{ fontWeight: 400, color: '#565c65' }}>(no reference layer configured)</span></span>
             </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer' }}>
-              <input type="checkbox" checked={showUncertainty} onChange={(e) => setShowUncertainty(e.target.checked)} style={{ accentColor: '#e65100' }} />
-              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>Per-Vertex Uncertainty</span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'not-allowed', opacity: 0.55 }} title="Per-vertex positional uncertainty is not produced anywhere in this pipeline — only per-parcel confidence components exist. Disabled rather than left silently inert.">
+              <input type="checkbox" checked={false} disabled style={{ accentColor: '#e65100' }} />
+              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>Per-Vertex Uncertainty <span style={{ fontWeight: 400 }}>(not computed by this pipeline)</span></span>
             </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer' }} title="Real CMWSSB water transmission network via OpenCity — see /collections/utilities/items.">
               <input type="checkbox" checked={showUtilities} onChange={(e) => setShowUtilities(e.target.checked)} style={{ accentColor: '#005ea2' }} />
-              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>PM GatiShakti NMP Utilities</span>
+              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>CMWSSB Utility Network</span>
             </label>
           </div>
 
@@ -1519,7 +1540,12 @@ export default function WebGISPage() {
           {viewMode === '2d' ? (
             <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
           ) : (
-            /* 3D CesiumJS View Container */
+            /* Honest unavailable state: no 3D engine actually runs here. Real per-building
+               height data does not exist in the harmonised output (only an AOI-wide mean
+               structure height), and no DSM/DEM raster has been fetched for this AOI — see
+               the Data Source Matrix in the Dossier tab — so there is nothing real to render
+               in 3D yet. This used to claim it was rendering satellite-draped DEM/LOD1
+               extrusions while showing a static screen; that claim has been removed. */
             <div style={{
               width: '100%',
               height: '100%',
@@ -1530,9 +1556,12 @@ export default function WebGISPage() {
               alignItems: 'center',
               color: '#ffffff',
             }}>
-              <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🌐 NIC GeoAI 3D Engine</div>
+              <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🌐 3D Terrain View</div>
               <div style={{ maxWidth: '520px', textAlign: 'center', fontSize: '0.95rem', color: '#a9d9e8', lineHeight: '1.6' }}>
-                Rendering High-Resolution Satellite Texture draped over 3D Digital Elevation Models (DEM) & LOD1 CityJSON Building Extrusions for {selectedWard.name}.
+                Not available for {selectedWard.name}. 3D rendering needs a real DSM/DEM raster and per-building
+                heights, neither of which has been fetched for this AOI yet (the harmonised output only carries
+                an AOI-wide mean structure height, not per-building geometry). See the Data Source Matrix in the
+                Dossier tab for the real, credential-gated DSM sources identified for this gap.
               </div>
             </div>
           )}
@@ -1611,7 +1640,7 @@ export default function WebGISPage() {
                   cursor: 'pointer',
                 }}
               >
-                ⚖️ Court Cases ({wardCourtCases.length})
+                ⚖️ Court Cases {courtDataSource === 'credential_required' ? '(auth required)' : `(${wardCourtCases.length})`}
               </button>
               <button
                 onClick={() => setRightPanelTab('ward')}
@@ -1795,32 +1824,8 @@ export default function WebGISPage() {
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Harmonized Parcels</div>
-                  <div style={{ fontSize: '1.3rem', fontWeight: 700, color: '#1a4480' }}>{wardStats.totalParcels.toLocaleString()}</div>
-                </div>
-                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Harmonized Buildings</div>
-                  <div style={{ fontSize: '1.3rem', fontWeight: 700, color: '#1a4480' }}>
-                    {wardBuildingCount === null ? '—' : wardBuildingCount.toLocaleString()}
-                  </div>
-                </div>
-                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Total Land Extent</div>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#1a4480' }}>
-                    {(wardStats.totalAreaM2 / 10000).toFixed(2)} <span style={{ fontSize: '0.7rem' }}>ha</span>
-                  </div>
-                </div>
-                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Built-Up Area</div>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#1a4480' }}>
-                    {(wardStats.builtUpAreaM2 / 10000).toFixed(2)} <span style={{ fontSize: '0.7rem' }}>ha</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Never a silent zero: explain exactly why a jurisdiction shows 0 records */}
+              {/* Never a silent zero: this explanation comes BEFORE the stat tiles, so a bare
+                  "0" is never the first thing shown without its reason right above it. */}
               {wardStats.totalParcels === 0 && (
                 <div style={{ background: '#fff9e6', border: '1px solid #ffe699', borderRadius: '4px', padding: '10px', fontSize: '0.75rem' }}>
                   {wardOutsidePipelineAoi ? (
@@ -1830,6 +1835,7 @@ export default function WebGISPage() {
                         The real harmonisation pipeline ran once over {runMetrics?.aoi?.name || 'the demo AOI'}
                         {pipelineAoiBbox ? ` (${pipelineAoiBbox.join(', ')})` : ''}. {selectedWard.name} falls
                         outside that extent, so no harmonised parcels exist for it yet — not a failed search.
+                        Every tile below reads &ldquo;&mdash;&rdquo; (not applicable) rather than a misleading zero.
                       </div>
                     </>
                   ) : (
@@ -1845,22 +1851,55 @@ export default function WebGISPage() {
                 </div>
               )}
 
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Harmonized Parcels</div>
+                  <div style={{ fontSize: '1.3rem', fontWeight: 700, color: '#1a4480' }}>
+                    {wardStats.totalParcels === 0 && wardOutsidePipelineAoi ? '—' : wardStats.totalParcels.toLocaleString()}
+                  </div>
+                </div>
+                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Harmonized Buildings</div>
+                  <div style={{ fontSize: '1.3rem', fontWeight: 700, color: '#1a4480' }}>
+                    {wardBuildingCount === null || (wardStats.totalParcels === 0 && wardOutsidePipelineAoi) ? '—' : wardBuildingCount.toLocaleString()}
+                  </div>
+                </div>
+                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Total Land Extent</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#1a4480' }}>
+                    {wardStats.totalParcels === 0 && wardOutsidePipelineAoi ? '—' : <>{(wardStats.totalAreaM2 / 10000).toFixed(2)} <span style={{ fontSize: '0.7rem' }}>ha</span></>}
+                  </div>
+                </div>
+                <div style={{ background: '#f4f6f9', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '8px' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Built-Up Area</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#1a4480' }}>
+                    {wardStats.totalParcels === 0 && wardOutsidePipelineAoi ? '—' : <>{(wardStats.builtUpAreaM2 / 10000).toFixed(2)} <span style={{ fontSize: '0.7rem' }}>ha</span></>}
+                  </div>
+                </div>
+              </div>
+
               {/* Data quality — real per-parcel confidence grades, aggregated client-side */}
               <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
                   📐 Data Quality — Confidence Distribution
                 </div>
-                <div style={{ fontSize: '0.75rem', marginBottom: '4px' }}>
-                  Mean confidence: <strong>{(parseFloat(wardStats.meanConfidence) * 100).toFixed(1)}%</strong> · Conflicts on record: <strong style={{ color: wardStats.conflicts > 0 ? '#d83933' : '#00a91c' }}>{wardStats.conflicts}</strong>
-                </div>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  {(['A', 'B', 'C', 'D', 'E'] as const).map((g) => (
-                    <div key={g} style={{ flex: 1, textAlign: 'center', background: '#eef1f5', borderRadius: '3px', padding: '3px 0' }}>
-                      <div style={{ fontSize: '0.65rem', color: '#565c65' }}>{g}</div>
-                      <div style={{ fontSize: '0.8rem', fontWeight: 700 }}>{wardStats.gradeCounts[g] || 0}</div>
+                {wardStats.totalParcels === 0 && wardOutsidePipelineAoi ? (
+                  <div style={{ fontSize: '0.75rem', color: '#565c65' }}>Not applicable — no harmonised parcels exist for {selectedWard.name} (outside pipeline AOI).</div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: '0.75rem', marginBottom: '4px' }}>
+                      Mean confidence: <strong>{(parseFloat(wardStats.meanConfidence) * 100).toFixed(1)}%</strong> · Conflicts on record: <strong style={{ color: wardStats.conflicts > 0 ? '#d83933' : '#00a91c' }}>{wardStats.conflicts}</strong>
                     </div>
-                  ))}
-                </div>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      {(['A', 'B', 'C', 'D', 'E'] as const).map((g) => (
+                        <div key={g} style={{ flex: 1, textAlign: 'center', background: '#eef1f5', borderRadius: '3px', padding: '3px 0' }}>
+                          <div style={{ fontSize: '0.65rem', color: '#565c65' }}>{g}</div>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 700 }}>{wardStats.gradeCounts[g] || 0}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Multi-source contribution & provenance — real, aggregated from each parcel's
@@ -1911,6 +1950,7 @@ export default function WebGISPage() {
                 <div style={{ fontSize: '0.75rem' }}>
                   <strong>{adjudicationTotal ?? adjudicationQueue.length}</strong> case{(adjudicationTotal ?? adjudicationQueue.length) === 1 ? '' : 's'} awaiting human review in {selectedWard.name}
                   {adjudicationTotal !== null && adjudicationTotal > adjudicationQueue.length ? ` (${adjudicationQueue.length} loaded)` : ''}.
+                  {(adjudicationTotal ?? adjudicationQueue.length) === 0 && wardOutsidePipelineAoi ? ' A genuine (bbox-filtered) result, not a fabricated zero — this AOI has no adjudication cases because it falls outside the pipeline extent.' : ''}
                 </div>
               </div>
 

@@ -7,5 +7,6 @@ samanvay/.pytest_cache/
 samanvay/out/
 samanvay/data/raw/
 samanvay/data/aoi/
+samanvay/data/aoi_metro/
 .DS_Store
 **/node_modules/

@@ -690,8 +690,10 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
                            "property_path": updated.property_path, "decision": decision,
                            "rationale": rationale, "resolved_by": user.username})
 
-        # 2. Emit real-time Kafka event to downstream consumers
-        kafka_bus.emit(
+        # 2. Emit real-time Kafka event to downstream consumers — reached_broker is real:
+        # False means this fell back to the local audit-ledger log (no Kafka broker
+        # configured/reachable in this environment), not a fabricated success flag.
+        reached_broker = kafka_bus.emit(
             topic=KafkaEventBus.TOPIC_ADJUDICATION,
             key=ulpin,
             payload={
@@ -712,7 +714,8 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
             "ulpin": ulpin,
             "decision": decision,
             "ledger_anchored": True,
-            "kafka_event_emitted": True,
+            "kafka_event_emitted": reached_broker,
+            "kafka_event_source": "broker" if reached_broker else "local_audit_log",
         }
 
     @app.post("/api/ai/extract-footprints", tags=["geoai"])

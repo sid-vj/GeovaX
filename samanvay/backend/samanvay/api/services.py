@@ -72,9 +72,9 @@ class RedisCacheService:
 class KafkaEventBus:
     """Apache Kafka event producer for real-time land record state notifications."""
     
-    TOPIC_ADJUDICATION = "samanvay.events.adjudication"
-    TOPIC_MUTATION = "samanvay.events.parcel.mutated"
-    TOPIC_LITIGATION = "samanvay.events.litigation.flagged"
+    TOPIC_ADJUDICATION = "geovax.events.adjudication"
+    TOPIC_MUTATION = "geovax.events.parcel.mutated"
+    TOPIC_LITIGATION = "geovax.events.litigation.flagged"
 
     def __init__(self, bootstrap_servers: Optional[str] = None):
         self.bootstrap_servers = bootstrap_servers or os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
@@ -95,8 +95,10 @@ class KafkaEventBus:
             logger.info("Kafka broker not reachable (%s); queueing events in local audit ledger.", err)
             self._producer = None
 
-    def emit(self, topic: str, key: str, payload: dict[str, Any]) -> None:
-        """Emit real-time event to Kafka topic or local ledger."""
+    def emit(self, topic: str, key: str, payload: dict[str, Any]) -> bool:
+        """Emit real-time event to Kafka topic or local ledger. Returns True only if this
+        actually reached a real Kafka broker — callers (e.g. /api/adjudication/resolve) use
+        this to report an honest `kafka_event_emitted` rather than always claiming success."""
         event_envelope = {
             "topic": topic,
             "key": key,
@@ -107,12 +109,13 @@ class KafkaEventBus:
             try:
                 self._producer.send(topic, key=key.encode("utf-8"), value=payload)
                 self._producer.flush()
-                return
+                return True
             except Exception as err:
                 logger.warning("Failed emitting to Kafka: %s", err)
-        
+
         self._event_log.append(event_envelope)
         logger.info("[KafkaBus Local] Topic: %s | Key: %s | Payload keys: %s", topic, key, list(payload.keys()))
+        return False
 
     def get_recent_events(self, limit: int = 50) -> list[dict[str, Any]]:
         return self._event_log[-limit:]

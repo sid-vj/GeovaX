@@ -16,6 +16,17 @@ AOIS: dict[str, tuple[str, tuple[float, float, float, float]]] = {
     "core": ("Chennai Central", (80.20, 13.03, 80.28, 13.11)),
     "test": ("Chennai Chetpet tile", (80.235, 13.070, 80.250, 13.085)),
     "mid":  ("Chennai Nungambakkam-Kilpauk", (80.225, 13.045, 80.265, 13.095)),
+    # Covers every real jurisdiction button in AVAILABLE_WARDS (web-gis/src/lib/auth.ts) from
+    # Vandalur/Veeralakshmi Nagar in the south-west to Mylapore/Egmore in the north-east, so
+    # the demo UI's whole Vandalur-to-Guindy-to-Central-Chennai corridor has real harmonised
+    # data instead of "AOI outside dataset coverage" for the wards south of Guindy. Verified
+    # before running: the same single Google Open Buildings S2 level-4 cell ("3a5") already
+    # fetched for "core" covers this whole extent too (s2sphere.RegionCoverer, level 4), and
+    # the already-downloaded state-wide TNGIS / city-wide GCC buildings files have real
+    # feature density inside the new southern extent (sampled directly, not assumed) — NCSCM
+    # coastal cadastre does not reach this far inland, which will show up honestly as
+    # single-source (TNGIS-only) parcels there, not a bug.
+    "metro": ("Chennai Metro Corridor (Vandalur–Egmore)", (80.05, 12.87, 80.29, 13.10)),
 }
 
 

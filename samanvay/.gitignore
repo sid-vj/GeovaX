@@ -1,5 +1,8 @@
 data/raw/
 data/aoi/
+data/aoi_metro/
+web-gis/test-results/
+web-gis/playwright-report/
 out/
 **/__pycache__/
 *.pyc
