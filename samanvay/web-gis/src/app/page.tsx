@@ -1002,7 +1002,7 @@ export default function WebGISPage() {
               {/* OSIRIS AI SAM Extractor */}
               <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '6px', padding: '10px' }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  🧠 NIC GeoAI: PyTorch SAM
+                  🧠 NIC GeoAI: Rooftop Extraction
                 </div>
                 <button
                   onClick={handleTriggerGeoAI}
