@@ -51,6 +51,10 @@ export default function WebGISPage() {
     litigationCount: 0,
     builtUpAreaM2: 0,
   });
+  // Real per-jurisdiction building count. Buildings carry a numeric municipal ward code
+  // (e.g. "77"), not the ward-name strings parcels are filtered by, so this is fetched by
+  // bbox against the same AOI extent as the aoi-boundary layer rather than by ?ward=.
+  const [wardBuildingCount, setWardBuildingCount] = useState<number | null>(null);
   const [accessAlert, setAccessAlert] = useState<string | null>(null);
   const [rightPanelTab, setRightPanelTab] = useState<'litigation' | 'ward' | 'parcel'>('litigation');
   const [sidebarTab, setSidebarTab] = useState<'zones' | 'layers' | 'revenue'>('zones');
@@ -99,16 +103,29 @@ export default function WebGISPage() {
   // /api/run's metrics.json), replacing what was a hardcoded 87%/13% regardless of what
   // the pipeline actually produced.
   const [resolveStats, setResolveStats] = useState<{ autoPct: number; queuedPct: number } | null>(null);
+  // The full /api/run response (real pipeline stage reports: ingest/schema_map/reproject/
+  // topology/match/cluster/resolve/change/confidence) — this is one AOI-wide run, not
+  // per-jurisdiction, so it's surfaced labelled as "AOI-wide" and does not change when a
+  // different ward is selected; only the ward-scoped sections below do.
+  const [runMetrics, setRunMetrics] = useState<any>(null);
+  // Real /api/changes summary (change-type counts over the actual detected changes).
+  const [changesSummary, setChangesSummary] = useState<{ total: number; counts: Record<string, number> } | null>(null);
   useEffect(() => {
     fetch('http://127.0.0.1:8000/api/run')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
+        if (!d) return;
+        setRunMetrics(d);
         const resolve = d?.stages?.resolve;
         if (resolve && typeof resolve.entities === 'number' && resolve.entities > 0) {
           const queuedPct = (resolve.escalated / resolve.entities) * 100;
           setResolveStats({ autoPct: 100 - queuedPct, queuedPct });
         }
       })
+      .catch(() => {});
+    fetch('http://127.0.0.1:8000/api/changes?limit=1')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setChangesSummary({ total: d.total, counts: d.counts || {} }); })
       .catch(() => {});
   }, []);
 
@@ -417,6 +434,25 @@ export default function WebGISPage() {
             properties: { name: `Official AOI Extent: ${ward.name}` },
           };
           map.getSource('aoi-boundary').setData(aoiGeojson);
+
+          // Real harmonized building count for this AOI. numberMatched reflects the full
+          // real match count server-side regardless of `limit`, so limit=1 is enough.
+          try {
+            const bbox = `${cx - pad},${cy - pad},${cx + pad},${cy + pad}`;
+            const bRes = await fetch(
+              `http://127.0.0.1:8000/collections/buildings/items?bbox=${bbox}&limit=1`,
+              { headers: { 'Authorization': `Bearer ${user.token}` } }
+            );
+            if (bRes.ok) {
+              const bJson = await bRes.json();
+              setWardBuildingCount(typeof bJson.numberMatched === 'number' ? bJson.numberMatched : null);
+            } else {
+              setWardBuildingCount(null);
+            }
+          } catch (err) {
+            console.error('Failed fetching real building count', err);
+            setWardBuildingCount(null);
+          }
         }
 
         const parcelsList = features.map((f: any) => f.properties);
