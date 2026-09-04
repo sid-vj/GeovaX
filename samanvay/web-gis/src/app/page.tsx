@@ -35,6 +35,8 @@ export default function WebGISPage() {
 
   const [adjudicationQueue, setAdjudicationQueue] = useState<any[]>([]);
   const [wardCourtCases, setWardCourtCases] = useState<any[]>([]);
+  const [courtDataSource, setCourtDataSource] = useState<string | null>(null);
+  const [ecDataSource, setEcDataSource] = useState<string | null>(null);
   const [kafkaEvents, setKafkaEvents] = useState<any[]>([]);
   const [geoaiStatus, setGeoaiStatus] = useState<string | null>(null);
   const [selectedParcel, setSelectedParcel] = useState<any | null>(null);
@@ -224,6 +226,8 @@ export default function WebGISPage() {
         const data = await res.json();
         const cases = data.cases || [];
         setWardCourtCases(cases);
+        setCourtDataSource(data.court_data_source ?? null);
+        setEcDataSource(data.ec_data_source ?? null);
         setWardStats((prev: any) => ({ ...prev, litigationCount: cases.length }));
       }
     } catch (err) {
@@ -1496,19 +1500,34 @@ export default function WebGISPage() {
                   <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#1b1b1b' }}>
                     e-Courts National Judicial Data Grid
                   </span>
-                  <span style={{
-                    padding: '3px 8px',
-                    fontSize: '0.75rem',
-                    fontWeight: 700,
-                    background: '#d83933',
-                    color: '#ffffff',
-                    borderRadius: '4px',
-                  }}>
-                    {wardCourtCases.length} ACTIVE SUITS
-                  </span>
+                  {courtDataSource === 'not_configured' ? (
+                    <span style={{
+                      padding: '3px 8px',
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      background: '#565c65',
+                      color: '#ffffff',
+                      borderRadius: '4px',
+                    }}>
+                      SOURCE NOT CONFIGURED
+                    </span>
+                  ) : (
+                    <span style={{
+                      padding: '3px 8px',
+                      fontSize: '0.75rem',
+                      fontWeight: 700,
+                      background: '#d83933',
+                      color: '#ffffff',
+                      borderRadius: '4px',
+                    }}>
+                      {wardCourtCases.length} ACTIVE SUITS
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: '0.78rem', color: '#565c65', marginTop: '4px' }}>
-                  Click any case card to open its <strong>Certified Court Injunction Order</strong> & legal timeline.
+                  {courtDataSource === 'not_configured'
+                    ? <>No live e-Courts/NJDG endpoint is configured for this deployment (<code>ECOURTS_API_URL</code> unset) — this is not a search result, no query for this jurisdiction has actually been answered.</>
+                    : <>Click any case card to open its <strong>Certified Court Injunction Order</strong> & legal timeline.</>}
                 </div>
               </div>
 
@@ -1516,7 +1535,9 @@ export default function WebGISPage() {
               <div style={{ maxHeight: '480px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {wardCourtCases.length === 0 ? (
                   <div style={{ padding: '20px', textAlign: 'center', color: '#565c65', fontSize: '0.8rem' }}>
-                    No pending judicial disputes found in {selectedWard.name}.
+                    {courtDataSource === 'not_configured'
+                      ? <>Court data source: <strong>Not configured</strong>. No e-Courts/NJDG API is reachable from this deployment for {selectedWard.name} — this is an unavailable-data state, not a verified zero-result search.</>
+                      : <>No pending judicial disputes found in {selectedWard.name}.</>}
                   </div>
                 ) : (
                   wardCourtCases.map((c: any, idx: number) => (
@@ -1526,7 +1547,7 @@ export default function WebGISPage() {
                       style={{
                         background: '#ffffff',
                         border: '1px solid #dfe1e2',
-                        borderLeft: `5px solid ${c.status.includes('Injunction') || c.status.includes('Stay') ? '#d83933' : '#005ea2'}`,
+                        borderLeft: `5px solid ${(c.status || '').includes('Grant') || (c.status || '').includes('Stay') ? '#d83933' : '#005ea2'}`,
                         borderRadius: '4px',
                         padding: '10px',
                         fontSize: '0.78rem',
@@ -1539,7 +1560,7 @@ export default function WebGISPage() {
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div style={{ fontWeight: 700, color: '#d83933', fontSize: '0.85rem' }}>
-                          ⚖️ {c.case_number}
+                          ⚖️ CNR {c.cnr}
                         </div>
                         <span style={{ fontSize: '0.68rem', color: '#1a4480', background: '#e1f3f8', padding: '2px 6px', fontWeight: 700, borderRadius: '3px' }}>
                           Survey {c.survey_number}
@@ -1547,26 +1568,26 @@ export default function WebGISPage() {
                       </div>
 
                       <div style={{ fontSize: '0.72rem', color: '#565c65', margin: '3px 0' }}>
-                        CNR: <strong>{c.cnr}</strong> · ULPIN: {c.ulpin}
+                        ULPIN: {c.ulpin} · Year: {c.year}
                       </div>
 
                       <div style={{ fontSize: '0.76rem', color: '#1b1b1b', fontWeight: 600 }}>
-                        {c.suit_type}
+                        {c.case_type}
                       </div>
 
                       <div style={{ fontSize: '0.72rem', color: '#565c65', marginTop: '2px' }}>
-                        🏛️ {c.court_name} · 📍 <strong>{c.street_name || selectedWard.id}</strong>
+                        🏛️ {c.court_name} · 📍 <strong>{c.village_name || selectedWard.id}</strong>
                       </div>
 
                       <div style={{ fontSize: '0.72rem', color: '#565c65', marginTop: '2px' }}>
-                        Parties: {c.parties}
+                        Petitioner: {c.petitioner} · Respondent: {c.respondent}
                       </div>
 
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
                         <span style={{
                           padding: '3px 6px',
-                          background: c.status.includes('Injunction') || c.status.includes('Stay') ? '#f8dfe2' : '#f4f6f9',
-                          color: c.status.includes('Injunction') || c.status.includes('Stay') ? '#9e1c23' : '#565c65',
+                          background: (c.status || '').includes('Stay') ? '#f8dfe2' : '#f4f6f9',
+                          color: (c.status || '').includes('Stay') ? '#9e1c23' : '#565c65',
                           fontSize: '0.7rem',
                           fontWeight: 700,
                           borderRadius: '3px',
@@ -1923,7 +1944,7 @@ export default function WebGISPage() {
                   ⚖️ e-Courts National Judicial Data Grid · Certified Dossier
                 </div>
                 <div style={{ fontSize: '1.25rem', fontWeight: 700, marginTop: '2px' }}>
-                  {activeCaseModal.case_number}
+                  CNR {activeCaseModal.cnr}
                 </div>
               </div>
               <button
@@ -1956,11 +1977,13 @@ export default function WebGISPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <strong style={{ color: '#9e1c23', fontSize: '0.95rem' }}>🚨 {activeCaseModal.status}</strong>
                   <span style={{ fontSize: '0.75rem', fontWeight: 700, background: '#d83933', color: '#ffffff', padding: '2px 8px', borderRadius: '4px' }}>
-                    {activeCaseModal.risk_tier} RISK
+                    {activeCaseModal.case_type}
                   </span>
                 </div>
                 <div style={{ fontSize: '0.8rem', color: '#565c65', marginTop: '6px', lineHeight: '1.4' }}>
-                  {activeCaseModal.interim_decree}
+                  Filed {activeCaseModal.year}. This platform's own e-Courts connector carries no order
+                  text or hearing-date fields — those are not provided by the configured source and are
+                  not shown rather than invented.
                 </div>
               </div>
 
@@ -1976,12 +1999,16 @@ export default function WebGISPage() {
                 <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
                   <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Disputed Survey Land</div>
                   <div style={{ fontWeight: 700, color: '#005ea2', fontSize: '0.95rem' }}>
-                    Survey {activeCaseModal.survey_number} · {activeCaseModal.street_name}
+                    Survey {activeCaseModal.survey_number} · {activeCaseModal.village_name}
                   </div>
                 </div>
                 <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Next Hearing Date</div>
-                  <div style={{ fontWeight: 700, color: '#d83933', fontSize: '0.95rem' }}>{activeCaseModal.next_hearing_date}</div>
+                  <div style={{ fontSize: '0.7rem', color: '#565c65', textTransform: 'uppercase' }}>Encumbrance Flags</div>
+                  <div style={{ fontWeight: 700, color: '#d83933', fontSize: '0.85rem' }}>
+                    {activeCaseModal.ec_flags && activeCaseModal.ec_flags.length > 0
+                      ? activeCaseModal.ec_flags.join('; ')
+                      : 'None on record'}
+                  </div>
                 </div>
               </div>
 
