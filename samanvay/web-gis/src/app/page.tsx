@@ -45,6 +45,9 @@ export default function WebGISPage() {
   const [ecDataSource, setEcDataSource] = useState<string | null>(null);
   const [kafkaEvents, setKafkaEvents] = useState<any[]>([]);
   const [geoaiStatus, setGeoaiStatus] = useState<string | null>(null);
+  // Real extracted-feature count from the last /api/ai/extract-footprints run, surfaced in
+  // the Dossier/Telemetry tabs too — null means "hasn't been run yet", not zero.
+  const [geoaiExtractedCount, setGeoaiExtractedCount] = useState<number | null>(null);
   const [selectedParcel, setSelectedParcel] = useState<any | null>(null);
   const [isResolving, setIsResolving] = useState(false);
   const [wardParcels, setWardParcels] = useState<any[]>([]);
@@ -404,7 +407,17 @@ export default function WebGISPage() {
           const confidences = (data.features || []).map((f: any) => f.properties?.confidence).filter((c: any) => typeof c === 'number');
           const meanConf = confidences.length ? (confidences.reduce((a: number, b: number) => a + b, 0) / confidences.length) : null;
           setGeoaiStatus(`Extracted ${data.extracted_count} building footprints via ${data.model}` + (meanConf !== null ? ` (mean confidence ${(meanConf * 100).toFixed(1)}%).` : '.'));
+          // Draw the real extracted geometry on the map (geoai-extracted-fill/-line layers)
+          // so a successful run is actually visible, not just reported as status text.
+          const src = mapInstanceRef.current?.getSource('geoai-extracted');
+          if (src) {
+            src.setData({ type: 'FeatureCollection', features: data.features || [] });
+          }
+          setGeoaiExtractedCount(data.extracted_count);
         } else {
+          const src = mapInstanceRef.current?.getSource('geoai-extracted');
+          if (src) src.setData({ type: 'FeatureCollection', features: [] });
+          setGeoaiExtractedCount(0);
           // Honest: 0 real extractions means no DSM raster was found for this AOI, not
           // that the AI ran and found nothing on real imagery. Surface the backend's own
           // explanation rather than implying a false success.
@@ -652,22 +665,18 @@ export default function WebGISPage() {
             type: 'geojson',
             data: 'http://127.0.0.1:8000/api/analytics/encroachment',
           },
-          'aoi-boundary': {
+          // Populated only by a real /api/ai/extract-footprints response (handleTriggerGeoAI)
+          // — starts empty; never seeded with a placeholder shape.
+          'geoai-extracted': {
             type: 'geojson',
-            data: {
-              type: 'Feature',
-              geometry: {
-                type: 'Polygon',
-                coordinates: [[
-                  [80.058, 12.900],
-                  [80.084, 12.900],
-                  [80.084, 12.924],
-                  [80.058, 12.924],
-                  [80.058, 12.900],
-                ]],
-              },
-              properties: {},
-            },
+            data: { type: 'FeatureCollection', features: [] },
+          },
+          'aoi-boundary': {
+            // Starts empty — the real AOI polygon for the actual default selected ward is
+            // drawn by updateMapData() right after mount. Previously this was a hardcoded
+            // Vandalur-area box regardless of which ward was actually selected first.
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] },
           },
         },
         layers: [
@@ -753,6 +762,27 @@ export default function WebGISPage() {
               'line-color': '#d50000',
               'line-width': 2.5,
               'line-dasharray': [3, 3],
+            },
+          },
+          {
+            // Real AI-extracted building footprints, populated only when
+            // /api/ai/extract-footprints genuinely returns extracted geometry for the
+            // current AOI (handleTriggerGeoAI) — never a placeholder rectangle.
+            id: 'geoai-extracted-fill',
+            type: 'fill',
+            source: 'geoai-extracted',
+            paint: {
+              'fill-color': '#ffd60a',
+              'fill-opacity': 0.45,
+            },
+          },
+          {
+            id: 'geoai-extracted-line',
+            type: 'line',
+            source: 'geoai-extracted',
+            paint: {
+              'line-color': '#ffb700',
+              'line-width': 2,
             },
           },
           {
@@ -914,6 +944,13 @@ export default function WebGISPage() {
     if (mapInstanceRef.current && mapInstanceRef.current.isStyleLoaded()) {
       updateMapData(selectedWard, currentUser);
     }
+    // A GeoAI extraction result is scoped to the AOI it was run against — without this,
+    // switching wards left the previous ward's extraction status/map overlay visible under
+    // the new ward's name, which reads as though it belonged to the new selection.
+    setGeoaiStatus(null);
+    setGeoaiExtractedCount(null);
+    const geoaiSrc = mapInstanceRef.current?.getSource('geoai-extracted');
+    if (geoaiSrc) geoaiSrc.setData({ type: 'FeatureCollection', features: [] });
   }, [selectedWard, currentUser, authReady]);
 
   return (
@@ -1121,7 +1158,18 @@ export default function WebGISPage() {
                     {adjudicationQueue.slice(0, 3).map((c: any, i: number) => (
                       <div key={i} style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '6px', fontSize: '0.75rem' }}>
                         <div style={{ fontWeight: 700, color: '#1a4480' }}>Case: {c.case_id}</div>
+                        {c.entity_id && (
+                          <div style={{ fontSize: '0.65rem', color: '#565c65', fontFamily: 'monospace' }}>Entity: {c.entity_id}</div>
+                        )}
                         <div style={{ fontSize: '0.7rem', color: '#565c65' }}>{c.question || 'Boundary discrepancy'}</div>
+                        {Array.isArray(c.options) && c.options.length > 0 && (
+                          <div style={{ fontSize: '0.65rem', color: '#8c5b00', marginTop: '2px' }}>
+                            Conflicting sources: {c.options.map((o: any) => `${o.dataset} (w=${o.weight})`).join(' vs ')}
+                          </div>
+                        )}
+                        {c.why && (
+                          <div style={{ fontSize: '0.65rem', color: '#565c65', marginTop: '2px', fontStyle: 'italic' }}>{c.why}</div>
+                        )}
                         <button
                           onClick={() => handleResolveConflict(c)}
                           disabled={isResolving}
@@ -1991,6 +2039,11 @@ export default function WebGISPage() {
                     🛰️ AI Feature Extraction — Last Run
                   </div>
                   <div style={{ fontSize: '0.72rem', color: '#1b1b1b' }}>{geoaiStatus}</div>
+                  {geoaiExtractedCount !== null && geoaiExtractedCount > 0 && (
+                    <div style={{ fontSize: '0.68rem', color: '#565c65', marginTop: '4px' }}>
+                      Rendered on the map as the real extracted-footprint overlay (amber fill).
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2186,9 +2239,53 @@ export default function WebGISPage() {
           {rightPanelTab === 'parcel' && (
             <div style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
               {!selectedParcel ? (
-                <div style={{ padding: '20px', textAlign: 'center', color: '#565c65', fontSize: '0.85rem' }}>
-                  👉 Click any parcel on the map or from the Ward list to inspect its full digital land record.
-                </div>
+                <>
+                  {/* Real AOI-wide pipeline run telemetry — the same /api/run data already
+                      fetched for the Dossier tab, so no extra backend call. Fills what was
+                      previously a near-empty panel until a parcel is clicked. */}
+                  <div style={{ border: '1px solid #1a4480', borderRadius: '4px' }}>
+                    <div style={{ background: '#1a4480', color: '#fff', padding: '6px 8px', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase' }}>
+                      📡 Pipeline Processing Telemetry
+                    </div>
+                    {!runMetrics ? (
+                      <div style={{ padding: '10px', fontSize: '0.75rem', color: '#565c65' }}>Loading /api/run…</div>
+                    ) : (
+                      <div style={{ padding: '8px', fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#565c65' }}>Run ID:</span>
+                          <strong style={{ fontFamily: 'monospace', fontSize: '0.68rem' }}>{runMetrics.run_id || 'unknown'}</strong>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#565c65' }}>Generated:</span>
+                          <strong>{runMetrics.generated_at ? new Date(runMetrics.generated_at).toLocaleString() : 'unknown'}</strong>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#565c65' }}>Processing AOI:</span>
+                          <strong>{runMetrics.aoi?.name || 'unknown'}</strong>
+                        </div>
+                        {runMetrics.stages?.ingest && (
+                          <div>
+                            <div style={{ fontWeight: 700, color: '#1a4480', margin: '4px 0 2px' }}>Source Ingestion (real, AOI-wide)</div>
+                            {Object.entries(runMetrics.stages.ingest).map(([src, ing]: [string, any]) => (
+                              <div key={src} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#565c65', padding: '1px 0' }}>
+                                <span>{src}</span>
+                                <strong>{typeof ing.features_in_aoi === 'number' ? ing.features_in_aoi.toLocaleString() : '—'} features</strong>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {runMetrics.stages?.confidence?.summary && (
+                          <div style={{ borderTop: '1px solid #e6e6e6', paddingTop: '4px' }}>
+                            <span style={{ color: '#565c65' }}>Confidence summary:</span> {runMetrics.stages.confidence.summary}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ padding: '16px', textAlign: 'center', color: '#565c65', fontSize: '0.85rem' }}>
+                    👉 Click any parcel on the map or from the Ward list for its own live per-parcel telemetry below.
+                  </div>
+                </>
               ) : (
                 <>
                   <div style={{ background: '#f4f6f9', border: '2px solid #005ea2', borderRadius: '4px', padding: '10px' }}>
@@ -2291,6 +2388,52 @@ export default function WebGISPage() {
                       <div style={{ color: '#8c5b00', fontSize: '0.65rem', marginTop: '4px' }}>
                         Positional confidence (real, from the harmonisation run): <strong>{selectedParcel.conf_positional != null ? `${(selectedParcel.conf_positional * 100).toFixed(1)}%` : 'N/A'}</strong>
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Real per-parcel harmonisation evidence — fields already present on the
+                      fetched parcel object (contributing_datasets, full confidence
+                      breakdown, conflicts, structures) that were fetched but never
+                      surfaced anywhere in the UI. */}
+                  <div style={{ border: '1px solid #1a4480', borderRadius: '4px' }}>
+                    <div style={{ background: '#1a4480', color: '#fff', padding: '6px 8px', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase' }}>
+                      🧬 Parcel Harmonization Evidence
+                    </div>
+                    <div style={{ padding: '8px', fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#565c65' }}>Source datasets:</span>
+                        <strong style={{ textAlign: 'right' }}>{selectedParcel.contributing_datasets || 'Not recorded'} ({selectedParcel.n_sources ?? '—'} source{selectedParcel.n_sources === 1 ? '' : 's'})</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#565c65' }}>Conflicts on record:</span>
+                        <strong style={{ color: (selectedParcel.conflicts || 0) > 0 ? '#d83933' : '#00a91c' }}>{selectedParcel.conflicts ?? 0}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#565c65' }}>Overall confidence:</span>
+                        <strong>{selectedParcel.confidence != null ? `${(selectedParcel.confidence * 100).toFixed(1)}%` : '—'} (Grade {selectedParcel.confidence_grade || '—'})</strong>
+                      </div>
+                      <div style={{ borderTop: '1px solid #e6e6e6', paddingTop: '4px' }}>
+                        <div style={{ fontWeight: 700, color: '#1a4480', marginBottom: '2px' }}>Confidence Components</div>
+                        {([
+                          ['Positional', selectedParcel.conf_positional],
+                          ['Source Agreement', selectedParcel.conf_source_agreement],
+                          ['Topological', selectedParcel.conf_topological],
+                          ['Attribute Completeness', selectedParcel.conf_attribute_completeness],
+                          ['Temporal Currency', selectedParcel.conf_temporal_currency],
+                          ['Lineage Integrity', selectedParcel.conf_lineage_integrity],
+                        ] as [string, any][]).map(([label, v]) => (
+                          <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#565c65', padding: '1px 0' }}>
+                            <span>{label}</span>
+                            <strong>{v != null ? `${(v * 100).toFixed(1)}%` : '—'}</strong>
+                          </div>
+                        ))}
+                      </div>
+                      {selectedParcel.building_count != null && (
+                        <div style={{ borderTop: '1px solid #e6e6e6', paddingTop: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#565c65' }}>Buildings on parcel:</span>
+                          <strong>{selectedParcel.building_count} ({selectedParcel.built_up_area_m2 ?? '—'} m² built-up, {selectedParcel.ground_coverage_pct ?? '—'}% coverage)</strong>
+                        </div>
+                      )}
                     </div>
                   </div>
 

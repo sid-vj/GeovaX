@@ -207,6 +207,78 @@ test.describe('GeovaX — jurisdiction-driven registry panel', () => {
     expect(hasHonestExplanation).toBeTruthy();
   });
 
+  test('AI rooftop extraction runs against the currently-selected AOI, not a hardcoded one', async ({ page }) => {
+    await boot(page);
+    await selectWard(page, 'Mylapore');
+    await page.getByText('Adjudication & AI Tools', { exact: false }).click();
+    await page.waitForTimeout(800);
+
+    const requests: string[] = [];
+    page.on('request', (req) => {
+      if (req.url().includes('/api/ai/extract-footprints')) requests.push(req.postData() || '');
+    });
+
+    await page.getByText(/Segment Rooftops on/).click();
+    await page.waitForTimeout(3000);
+
+    expect(requests.length).toBeGreaterThan(0);
+    const body = JSON.parse(requests[0]);
+    // Mylapore's real center (from AVAILABLE_WARDS) must drive the bbox — not a
+    // hardcoded Anna Salai/other-ward coordinate.
+    expect(body.bbox[0]).toBeCloseTo(80.268 - 0.01, 2);
+    expect(body.bbox[1]).toBeCloseTo(13.036 - 0.01, 2);
+
+    const text = await page.locator('body').innerText();
+    // Honest either way: real extraction count, or an explicit reason nothing was extracted
+    // (no DSM raster) — never silence, never a fabricated rectangle.
+    expect(/Extracted \d+ building footprints via|No structures extracted|No DSM raster/.test(text)).toBeTruthy();
+  });
+
+  test('conflict queue cases carry real pipeline detail, not just a bare case ID', async ({ page }) => {
+    await boot(page);
+    await selectWard(page, 'Egmore');
+    await page.getByText('Adjudication & AI Tools', { exact: false }).click();
+    await page.waitForTimeout(1000);
+    const text = await page.locator('body').innerText();
+    if (/No open conflicts/.test(text)) return; // genuinely empty is fine — nothing to assert
+    expect(text).toMatch(/Case: ADJ-/);
+    expect(text).toMatch(/Entity: |Conflicting sources: /);
+  });
+
+  test('GeoAI extraction status resets when the jurisdiction changes (no stale carry-over)', async ({ page }) => {
+    await boot(page);
+    await selectWard(page, 'Egmore');
+    await page.getByText('Adjudication & AI Tools', { exact: false }).click();
+    await page.waitForTimeout(800);
+    await page.getByText(/Segment Rooftops on/).click();
+    // Poll rather than a fixed sleep — under heavy backend load (e.g. a concurrent
+    // harmonisation run) the extraction request can take much longer than a fixed wait.
+    await expect
+      .poll(async () => {
+        const t = await page.locator('body').innerText();
+        return /No DSM raster|Extracted \d+ building footprints/.test(t);
+      }, { timeout: 20000 })
+      .toBeTruthy();
+
+    await openDossier(page);
+    const beforeSwitch = await page.locator('body').innerText();
+    // The card's own header is CSS text-transform:uppercase, which innerText reflects (this
+    // is real rendered-page text, not a test quirk) — match case-insensitively.
+    expect(beforeSwitch).toMatch(/AI Feature Extraction — Last Run/i);
+
+    // Ward buttons live under the left sidebar's "Zones" tab, not "Adjudication & AI Tools"
+    // (still active from triggering the extraction above) — switch back first.
+    await page.getByText('Zones', { exact: false }).first().click();
+    await page.waitForTimeout(500);
+    await selectWard(page, 'Chetpet');
+    await openDossier(page);
+    const afterSwitch = await page.locator('body').innerText();
+    // The previous ward's extraction result card must not carry over under the new ward —
+    // a fresh extraction hasn't been run for Chetpet yet, so the card should be gone, not
+    // showing Egmore's stale status as if it belonged to Chetpet.
+    expect(afterSwitch).not.toMatch(/AI Feature Extraction — Last Run/i);
+  });
+
   test('e-Courts never claims "0 active suits" as a verified search result', async ({ page }) => {
     await boot(page);
     await selectWard(page, 'Egmore');
