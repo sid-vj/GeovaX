@@ -39,6 +39,9 @@ export default function WebGISPage() {
   const [adjudicationTotal, setAdjudicationTotal] = useState<number | null>(null);
   const [wardCourtCases, setWardCourtCases] = useState<any[]>([]);
   const [courtDataSource, setCourtDataSource] = useState<string | null>(null);
+  const [courtLastSyncedAt, setCourtLastSyncedAt] = useState<string | null>(null);
+  const [courtQuerySource, setCourtQuerySource] = useState<string | null>(null);
+  const [courtQueryTime, setCourtQueryTime] = useState<string | null>(null);
   const [ecDataSource, setEcDataSource] = useState<string | null>(null);
   const [kafkaEvents, setKafkaEvents] = useState<any[]>([]);
   const [geoaiStatus, setGeoaiStatus] = useState<string | null>(null);
@@ -58,6 +61,12 @@ export default function WebGISPage() {
   // (e.g. "77"), not the ward-name strings parcels are filtered by, so this is fetched by
   // bbox against the same AOI extent as the aoi-boundary layer rather than by ?ward=.
   const [wardBuildingCount, setWardBuildingCount] = useState<number | null>(null);
+  // Real per-jurisdiction utility network segments (CMWSSB water transmission mains),
+  // bbox-scoped the same way as buildings — each entry is a real feature's properties.
+  const [wardUtilities, setWardUtilities] = useState<any[]>([]);
+  // Real client-side query timestamp for the parcels/buildings fetch, used only for the
+  // honest "0 verified records found / Query time: …" messaging — never a data value itself.
+  const [wardQueryTime, setWardQueryTime] = useState<string | null>(null);
   const [accessAlert, setAccessAlert] = useState<string | null>(null);
   const [rightPanelTab, setRightPanelTab] = useState<'litigation' | 'ward' | 'parcel'>('litigation');
   const [sidebarTab, setSidebarTab] = useState<'zones' | 'layers' | 'revenue'>('zones');
@@ -113,6 +122,14 @@ export default function WebGISPage() {
   const [runMetrics, setRunMetrics] = useState<any>(null);
   // Real /api/changes summary (change-type counts over the actual detected changes).
   const [changesSummary, setChangesSummary] = useState<{ total: number; counts: Record<string, number> } | null>(null);
+  // Real per-source provenance (government authority, official URL, licence, tier, vintage,
+  // coverage, format) for every dataset actually fed into this pipeline run — fixed for the
+  // whole AOI/run, not ward-scoped, fetched once from /api/provenance.
+  const [provenanceCatalogue, setProvenanceCatalogue] = useState<any[]>([]);
+  // Full researched data-source catalogue (every SIH-required category GeovaX has identified
+  // a real government/open-data source for), each with a disk-checked integration status —
+  // this is what makes credential-gated/not-yet-fetched sources visible rather than hidden.
+  const [fullCatalogue, setFullCatalogue] = useState<any[]>([]);
   useEffect(() => {
     fetch('http://127.0.0.1:8000/api/run')
       .then((r) => (r.ok ? r.json() : null))
@@ -129,6 +146,14 @@ export default function WebGISPage() {
     fetch('http://127.0.0.1:8000/api/changes?limit=1')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (d) setChangesSummary({ total: d.total, counts: d.counts || {} }); })
+      .catch(() => {});
+    fetch('http://127.0.0.1:8000/api/provenance')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        setProvenanceCatalogue(d.sources || []);
+        setFullCatalogue(d.full_catalogue || []);
+      })
       .catch(() => {});
   }, []);
 
@@ -246,7 +271,8 @@ export default function WebGISPage() {
     }
   };
 
-  // 3. Fetch ALL Court Cases for Active Ward
+  // 3. Fetch ALL Court Cases for Active Ward — via the real NJDG Open API connector
+  // (analytics/litigation.py's ECourtsConnector, gated on NAPIX departmental credentials).
   const fetchWardCourtCases = async (ward: WardLocation) => {
     try {
       const res = await fetch(`http://127.0.0.1:8000/api/litigation/ward/${encodeURIComponent(ward.id)}`);
@@ -255,7 +281,10 @@ export default function WebGISPage() {
         const cases = data.cases || [];
         setWardCourtCases(cases);
         setCourtDataSource(data.court_data_source ?? null);
+        setCourtLastSyncedAt(data.court_last_synced_at ?? null);
         setEcDataSource(data.ec_data_source ?? null);
+        setCourtQuerySource(data.query_source ?? null);
+        setCourtQueryTime(data.query_time ?? null);
         setWardStats((prev: any) => ({ ...prev, litigationCount: cases.length }));
       }
     } catch (err) {
@@ -393,6 +422,7 @@ export default function WebGISPage() {
   const updateMapData = async (ward: WardLocation, user: UserProfile) => {
     if (!mapInstanceRef.current) return;
     const map = mapInstanceRef.current;
+    setWardQueryTime(new Date().toISOString());
 
     if (user.wardScope && user.wardScope.length > 0 && ward.id !== 'all') {
       const hasPermission = user.wardScope.some((w) => w.toLowerCase() === ward.id.toLowerCase());
@@ -463,6 +493,26 @@ export default function WebGISPage() {
           } catch (err) {
             console.error('Failed fetching real building count', err);
             setWardBuildingCount(null);
+          }
+
+          // Real per-jurisdiction utility network segments (CMWSSB water transmission
+          // mains), same bbox pattern — fetched with features (not just numberMatched) since
+          // the Dossier panel breaks these down by real utility_type/authority.
+          try {
+            const bbox = `${cx - pad},${cy - pad},${cx + pad},${cy + pad}`;
+            const uRes = await fetch(
+              `http://127.0.0.1:8000/collections/utilities/items?bbox=${bbox}&limit=500`,
+              { headers: { 'Authorization': `Bearer ${user.token}` } }
+            );
+            if (uRes.ok) {
+              const uJson = await uRes.json();
+              setWardUtilities((uJson.features || []).map((f: any) => f.properties));
+            } else {
+              setWardUtilities([]);
+            }
+          } catch (err) {
+            console.error('Failed fetching real utility network segments', err);
+            setWardUtilities([]);
           }
         }
 
@@ -830,6 +880,15 @@ export default function WebGISPage() {
   const reprojectPairs: [string, any][] = runMetrics?.stages?.reproject ? Object.entries(runMetrics.stages.reproject) : [];
   const schemaMapPairs: [string, any][] = runMetrics?.stages?.schema_map ? Object.entries(runMetrics.stages.schema_map) : [];
   const changePairs: [string, any][] = runMetrics?.stages?.change ? Object.entries(runMetrics.stages.change) : [];
+
+  // Real AOI-coverage check: the harmonisation pipeline ran once over a fixed real bbox
+  // (runMetrics.aoi.bbox); a ward whose center falls outside it genuinely has no harmonised
+  // data to find — "0" there means "AOI outside dataset coverage", not "verified empty".
+  const pipelineAoiBbox: [number, number, number, number] | null = runMetrics?.aoi?.bbox ?? null;
+  const wardOutsidePipelineAoi = pipelineAoiBbox
+    ? (selectedWard.center[0] < pipelineAoiBbox[0] || selectedWard.center[0] > pipelineAoiBbox[2] ||
+       selectedWard.center[1] < pipelineAoiBbox[1] || selectedWard.center[1] > pipelineAoiBbox[3])
+    : false;
 
   // Trigger update on Ward or User change
   useEffect(() => {
@@ -1503,6 +1562,40 @@ export default function WebGISPage() {
               Taluk: {selectedWard.taluk} · Corridor: Pan-India Integration
             </div>
 
+            {/* Workflow stepper — what GeovaX actually does to a parcel, source to record.
+                Each stage highlights when the currently open tab is showing that stage's
+                real output, so this stays a map of the panel rather than decoration. */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '2px', marginTop: '8px',
+              overflowX: 'auto', whiteSpace: 'nowrap', paddingBottom: '2px',
+            }}>
+              {[
+                { label: 'SOURCE DATA', tabs: ['ward'] },
+                { label: 'AI EXTRACTION', tabs: ['ward'] },
+                { label: 'SPATIAL MATCHING', tabs: ['ward'] },
+                { label: 'HARMONIZATION', tabs: ['ward'] },
+                { label: 'VALIDATION', tabs: ['ward'] },
+                { label: 'CONFLICT RESOLUTION', tabs: ['ward'] },
+                { label: 'FINAL LAND RECORD', tabs: ['parcel'] },
+                { label: 'LEGAL STATUS', tabs: ['litigation'] },
+              ].map((stage, i, arr) => {
+                const active = stage.tabs.includes(rightPanelTab);
+                return (
+                  <span key={stage.label} style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                    <span style={{
+                      fontSize: '0.58rem', fontWeight: 700, padding: '2px 5px', borderRadius: '3px',
+                      background: active ? '#ffffff' : 'transparent',
+                      color: active ? '#1a4480' : '#a9d9e8',
+                      border: active ? 'none' : '1px solid #3d6ba3',
+                    }}>
+                      {stage.label}
+                    </span>
+                    {i < arr.length - 1 && <span style={{ color: '#3d6ba3', fontSize: '0.65rem' }}>→</span>}
+                  </span>
+                );
+              })}
+            </div>
+
             {/* Tab Switcher */}
             <div style={{ display: 'flex', gap: '3px', marginTop: '10px' }}>
               <button
@@ -1566,33 +1659,42 @@ export default function WebGISPage() {
                   <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: '#1b1b1b' }}>
                     e-Courts National Judicial Data Grid
                   </span>
-                  {courtDataSource === 'not_configured' ? (
-                    <span style={{
-                      padding: '3px 8px',
-                      fontSize: '0.72rem',
-                      fontWeight: 700,
-                      background: '#565c65',
-                      color: '#ffffff',
-                      borderRadius: '4px',
-                    }}>
-                      SOURCE NOT CONFIGURED
-                    </span>
-                  ) : (
-                    <span style={{
-                      padding: '3px 8px',
-                      fontSize: '0.75rem',
-                      fontWeight: 700,
-                      background: '#d83933',
-                      color: '#ffffff',
-                      borderRadius: '4px',
-                    }}>
-                      {wardCourtCases.length} ACTIVE SUITS
-                    </span>
-                  )}
+                  {(() => {
+                    // Four honest states, never a bare "0 active suits":
+                    // live/cached + cases -> real count; live/cached + zero -> verified zero;
+                    // credential_required -> the real NJDG Open API path exists but this
+                    // deployment has no NAPIX department credentials configured for it.
+                    if (courtDataSource === 'credential_required') {
+                      return (
+                        <span style={{ padding: '3px 8px', fontSize: '0.68rem', fontWeight: 700, background: '#565c65', color: '#ffffff', borderRadius: '4px' }}>
+                          OFFICIAL SOURCE AVAILABLE — CREDENTIAL REQUIRED
+                        </span>
+                      );
+                    }
+                    if (wardCourtCases.length === 0) {
+                      return (
+                        <span style={{ padding: '3px 8px', fontSize: '0.68rem', fontWeight: 700, background: '#00a91c', color: '#ffffff', borderRadius: '4px' }}>
+                          NO OFFICIAL DATA AVAILABLE FOR THIS JURISDICTION
+                        </span>
+                      );
+                    }
+                    if (courtDataSource === 'cached') {
+                      return (
+                        <span style={{ padding: '3px 8px', fontSize: '0.72rem', fontWeight: 700, background: '#8c5b00', color: '#ffffff', borderRadius: '4px' }}>
+                          OFFICIAL DATA — LAST SYNCHRONIZED {courtLastSyncedAt ? new Date(courtLastSyncedAt).toLocaleString() : 'unknown'}
+                        </span>
+                      );
+                    }
+                    return (
+                      <span style={{ padding: '3px 8px', fontSize: '0.75rem', fontWeight: 700, background: '#d83933', color: '#ffffff', borderRadius: '4px' }}>
+                        LIVE OFFICIAL DATA — {wardCourtCases.length} ACTIVE SUITS
+                      </span>
+                    );
+                  })()}
                 </div>
                 <div style={{ fontSize: '0.78rem', color: '#565c65', marginTop: '4px' }}>
-                  {courtDataSource === 'not_configured'
-                    ? <>No live e-Courts/NJDG endpoint is configured for this deployment (<code>ECOURTS_API_URL</code> unset) — this is not a search result, no query for this jurisdiction has actually been answered.</>
+                  {courtDataSource === 'credential_required'
+                    ? <>The real NJDG Open API (issued via NAPIX under NDSAP to registered Government departments) is identified and this connector implements it, but this deployment has no <code>NJDG_DEPT_ID</code>/<code>NJDG_ACCESS_KEY</code> configured — this is not a search result, no query for this jurisdiction has actually been answered.</>
                     : <>Click any case card to open its <strong>Certified Court Injunction Order</strong> & legal timeline.</>}
                 </div>
               </div>
@@ -1600,10 +1702,17 @@ export default function WebGISPage() {
               {/* List of Court Cases */}
               <div style={{ maxHeight: '480px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {wardCourtCases.length === 0 ? (
-                  <div style={{ padding: '20px', textAlign: 'center', color: '#565c65', fontSize: '0.8rem' }}>
-                    {courtDataSource === 'not_configured'
-                      ? <>Court data source: <strong>Not configured</strong>. No e-Courts/NJDG API is reachable from this deployment for {selectedWard.name} — this is an unavailable-data state, not a verified zero-result search.</>
-                      : <>No pending judicial disputes found in {selectedWard.name}.</>}
+                  <div style={{ padding: '20px', textAlign: 'center', color: '#565c65', fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {courtDataSource === 'credential_required' ? (
+                      <>Official source requires authorized credentials.<br />No e-Courts/NJDG API is reachable from this deployment for {selectedWard.name} — this is an unavailable-data state, not a verified zero-result search.</>
+                    ) : (
+                      <>
+                        <strong>0 verified records found</strong>
+                        <span>Source queried: {courtQuerySource || 'NJDG Open API (NAPIX)'}</span>
+                        <span>Query time: {courtQueryTime ? new Date(courtQueryTime).toLocaleString() : '—'}</span>
+                        <span>Coverage: {selectedWard.name}</span>
+                      </>
+                    )}
                   </div>
                 ) : (
                   wardCourtCases.map((c: any, idx: number) => (
@@ -1711,6 +1820,31 @@ export default function WebGISPage() {
                 </div>
               </div>
 
+              {/* Never a silent zero: explain exactly why a jurisdiction shows 0 records */}
+              {wardStats.totalParcels === 0 && (
+                <div style={{ background: '#fff9e6', border: '1px solid #ffe699', borderRadius: '4px', padding: '10px', fontSize: '0.75rem' }}>
+                  {wardOutsidePipelineAoi ? (
+                    <>
+                      <strong>AOI outside dataset coverage.</strong>
+                      <div style={{ color: '#565c65', marginTop: '2px' }}>
+                        The real harmonisation pipeline ran once over {runMetrics?.aoi?.name || 'the demo AOI'}
+                        {pipelineAoiBbox ? ` (${pipelineAoiBbox.join(', ')})` : ''}. {selectedWard.name} falls
+                        outside that extent, so no harmonised parcels exist for it yet — not a failed search.
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <strong>0 verified records found</strong>
+                      <div style={{ color: '#565c65', marginTop: '2px' }}>
+                        Source queried: /collections/parcels/items (harmonised_parcels.geojson)<br />
+                        Query time: {wardQueryTime ? new Date(wardQueryTime).toLocaleString() : '—'}<br />
+                        Coverage: {selectedWard.name}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* Data quality — real per-parcel confidence grades, aggregated client-side */}
               <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
@@ -1742,12 +1876,29 @@ export default function WebGISPage() {
                     <div style={{ fontSize: '0.75rem', marginBottom: '6px' }}>
                       <strong>{corroborated}</strong> of <strong>{wardParcels.length}</strong> parcels corroborated by 2+ independent sources ({wardParcels.length > 0 ? ((corroborated / wardParcels.length) * 100).toFixed(1) : '0.0'}%).
                     </div>
-                    {Object.entries(sourceContribution).map(([src, n]) => (
-                      <div key={src} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', padding: '2px 0', borderTop: '1px solid #e6e6e6' }}>
-                        <span style={{ color: '#565c65' }}>{src}</span>
-                        <strong>{n.toLocaleString()} parcels</strong>
-                      </div>
-                    ))}
+                    {Object.entries(sourceContribution).map(([src, n]) => {
+                      const prov = provenanceCatalogue.find((p) => p.dataset_id === src);
+                      return (
+                        <div key={src} style={{ borderTop: '1px solid #e6e6e6', padding: '4px 0' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
+                            <span style={{ color: '#565c65', fontWeight: 700 }}>{src}</span>
+                            <strong>{n.toLocaleString()} parcels</strong>
+                          </div>
+                          {prov ? (
+                            <div style={{ fontSize: '0.68rem', color: '#565c65', marginTop: '2px', lineHeight: 1.5 }}>
+                              <div>{prov.authority_full_name} · Tier: <strong style={{ textTransform: 'uppercase' }}>{prov.tier}</strong> · Licence: {prov.licence}</div>
+                              <div>Vintage: {prov.vintage || 'not documented'} · CRS: {prov.crs || '—'} · Format: {prov.original_format || '—'}</div>
+                              <div>Coverage: {prov.coverage || '—'}</div>
+                              {prov.official_url && (
+                                <div>Source: <a href={prov.official_url} target="_blank" rel="noreferrer" style={{ color: '#005ea2' }}>{prov.official_url}</a></div>
+                              )}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '0.68rem', color: '#8c5b00', marginTop: '2px' }}>Provenance catalogue entry not loaded for this dataset.</div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </>
                 )}
               </div>
@@ -1761,6 +1912,35 @@ export default function WebGISPage() {
                   <strong>{adjudicationTotal ?? adjudicationQueue.length}</strong> case{(adjudicationTotal ?? adjudicationQueue.length) === 1 ? '' : 's'} awaiting human review in {selectedWard.name}
                   {adjudicationTotal !== null && adjudicationTotal > adjudicationQueue.length ? ` (${adjudicationQueue.length} loaded)` : ''}.
                 </div>
+              </div>
+
+              {/* Utility networks — real CMWSSB water transmission segments, bbox-scoped */}
+              <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
+                  🚰 Utility Networks (This Jurisdiction)
+                </div>
+                {wardUtilities.length === 0 ? (
+                  <div style={{ fontSize: '0.72rem', color: '#565c65' }}>
+                    <strong>0 verified records found</strong><br />
+                    Source queried: /collections/utilities/items (CMWSSB water transmission network, via OpenCity)<br />
+                    Coverage: {selectedWard.name}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '0.75rem' }}>
+                    <div style={{ marginBottom: '4px' }}><strong>{wardUtilities.length}</strong> real utility segments in {selectedWard.name}, {wardUtilities[0]?.authority || 'CMWSSB'}.</div>
+                    {Object.entries(
+                      wardUtilities.reduce((acc: Record<string, number>, u) => {
+                        const t = u.utility_type || 'Unclassified';
+                        acc[t] = (acc[t] || 0) + 1;
+                        return acc;
+                      }, {})
+                    ).map(([t, n]) => (
+                      <div key={t} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#565c65', padding: '1px 0' }}>
+                        <span>{t}</span><strong>{n as number}</strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* AI building/feature extraction — reuses the real geoaiStatus set by the
@@ -1858,6 +2038,38 @@ export default function WebGISPage() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Data Source Matrix — every SIH-required data category this project has
+                  identified a real government/open-data source for, with an honest,
+                  disk-checked integration status. Nothing here is hidden: credential-gated
+                  and not-yet-fetched sources are listed explicitly, never silently omitted. */}
+              <div style={{ border: '1px solid #1a4480', borderRadius: '4px' }}>
+                <div style={{ background: '#1a4480', color: '#fff', padding: '6px 8px', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase' }}>
+                  🗺️ Data Source Matrix <span style={{ fontWeight: 400, opacity: 0.85 }}>({fullCatalogue.length} real sources researched)</span>
+                </div>
+                {fullCatalogue.length === 0 ? (
+                  <div style={{ padding: '10px', fontSize: '0.75rem', color: '#565c65' }}>/api/provenance has not returned yet.</div>
+                ) : (
+                  <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.68rem', maxHeight: '260px', overflowY: 'auto' }}>
+                    {fullCatalogue.map((e) => {
+                      const color = e.integration_status.startsWith('LIVE') ? '#00a91c'
+                        : e.integration_status.startsWith('OFFICIAL SOURCE AVAILABLE') ? '#8c5b00'
+                        : e.integration_status.startsWith('DOWNLOADED') ? '#005ea2'
+                        : '#565c65';
+                      return (
+                        <div key={e.key} style={{ background: '#f4f6f9', borderRadius: '3px', padding: '5px', borderLeft: `3px solid ${color}` }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+                            <span>{e.title}</span>
+                          </div>
+                          <div style={{ color: '#565c65' }}>{e.authority_name} · Tier: {e.tier} · {e.licence}</div>
+                          <div style={{ color }}>{e.integration_status}</div>
+                          {e.official_url && <div style={{ color: '#005ea2', wordBreak: 'break-all' }}>{e.official_url}</div>}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

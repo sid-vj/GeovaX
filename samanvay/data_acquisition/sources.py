@@ -571,8 +571,10 @@ CATALOGUE: dict[str, DataSource] = {
              "format `ingest/gnss.py` already parses. Free for government/academic users "
              "after registration; paid for private/PSU users.",
         notes="Requires SOI CORS Portal registration this environment cannot complete — see "
-              "requires_credentials. The real connector (data_acquisition/adapters/soi_cors.py) "
-              "honestly reports 'not connected' until credentials are supplied via env vars.",
+              "requires_credentials. fetch.py's generic fetcher (used for every entry in this "
+              "catalogue) honestly reports status='requires_credentials' for this dataset and "
+              "skips it rather than fabricating a download, exactly like every other gated "
+              "source here; there is no separate bespoke adapter file for it.",
         requires_credentials=True,
     ),
     "soi_open_series_maps": DataSource(
