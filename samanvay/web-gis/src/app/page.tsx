@@ -77,6 +77,13 @@ export default function WebGISPage() {
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
+  // Guards against out-of-order responses when jurisdictions are switched faster than a
+  // real network round-trip: e.g. selecting Chetpet then Bengaluru in quick succession can
+  // let Chetpet's slower-to-resolve fetch land *after* Bengaluru's, overwriting the correct
+  // (empty) state with Chetpet's stale parcel/stats. Each updateMapData call claims the
+  // latest token; a call whose token has since been superseded discards its results instead
+  // of applying them.
+  const updateMapDataToken = useRef(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
@@ -435,6 +442,7 @@ export default function WebGISPage() {
   const updateMapData = async (ward: WardLocation, user: UserProfile) => {
     if (!mapInstanceRef.current) return;
     const map = mapInstanceRef.current;
+    const myToken = ++updateMapDataToken.current;
     setWardQueryTime(new Date().toISOString());
 
     if (user.wardScope && user.wardScope.length > 0 && ward.id !== 'all') {
@@ -462,6 +470,11 @@ export default function WebGISPage() {
       const res = await fetch(url, {
         headers: { 'Authorization': `Bearer ${user.token}` },
       });
+      if (myToken !== updateMapDataToken.current) {
+        // A newer jurisdiction switch started before this one's response arrived — discard
+        // it rather than let a stale, slower request overwrite the current selection's state.
+        return;
+      }
       if (res.ok) {
         const geojson = await res.json();
         const features = geojson.features || [];
@@ -497,6 +510,7 @@ export default function WebGISPage() {
               `http://127.0.0.1:8000/collections/buildings/items?bbox=${bbox}&limit=1`,
               { headers: { 'Authorization': `Bearer ${user.token}` } }
             );
+            if (myToken !== updateMapDataToken.current) return;
             if (bRes.ok) {
               const bJson = await bRes.json();
               setWardBuildingCount(typeof bJson.numberMatched === 'number' ? bJson.numberMatched : null);
@@ -517,6 +531,7 @@ export default function WebGISPage() {
               `http://127.0.0.1:8000/collections/utilities/items?bbox=${bbox}&limit=500`,
               { headers: { 'Authorization': `Bearer ${user.token}` } }
             );
+            if (myToken !== updateMapDataToken.current) return;
             if (uRes.ok) {
               const uJson = await uRes.json();
               setWardUtilities((uJson.features || []).map((f: any) => f.properties));
@@ -529,6 +544,7 @@ export default function WebGISPage() {
           }
         }
 
+        if (myToken !== updateMapDataToken.current) return;
         const parcelsList = features.map((f: any) => f.properties);
         setWardParcels(parcelsList);
 
