@@ -1154,7 +1154,7 @@ export default function WebGISPage() {
                     No open conflicts in {selectedWard.name}.
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '160px', overflowY: 'auto' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '420px', overflowY: 'auto' }}>
                     {adjudicationQueue.slice(0, 3).map((c: any, i: number) => (
                       <div key={i} style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '6px', fontSize: '0.75rem' }}>
                         <div style={{ fontWeight: 700, color: '#1a4480' }}>Case: {c.case_id}</div>
