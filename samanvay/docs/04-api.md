@@ -16,7 +16,7 @@ is at `/api/openapi.json`.
 
 ```bash
 make api           # uvicorn on :8000, console at /map
-geovax serve --out out/chennai --port 8000
+geovax serve --out out/chennai_metro --port 8000
 ```
 
 ---

@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 PY    ?= python3
-OUT   ?= out/chennai
+OUT   ?= out/chennai_metro
 AOI   ?= mid
 DATA  ?= data
 
@@ -51,7 +51,7 @@ evaluate:  ## regenerate the evaluation tables from the last run
 # ---------------------------------------------------------------------------- serve
 
 api:  ## serve the OGC API and platform API on :8000
-	SAMANVAY_OUT=$(OUT) $(PY) -m uvicorn samanvay.api.app:app \
+	GEOVAX_OUT=$(OUT) $(PY) -m uvicorn samanvay.api.app:app \
 	   --app-dir backend --host 0.0.0.0 --port 8000 --reload
 
 ui: api  ## the console is served by the API at /map

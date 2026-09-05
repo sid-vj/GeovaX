@@ -83,4 +83,16 @@ def default_layers(data_dir: str, max_features: int | None = None) -> list[Layer
             original_format="GeoParquet", coverage="Pan-India (clipped to AOI)",
             transformation="Reprojected to EPSG:4326, clipped to AOI bbox",
         ),
+        LayerSpec(
+            dataset_id="MS_BUILDINGS_TN",
+            path=os.path.join(data_dir, "buildings_ms.geojsonl"),
+            source_type=SourceType.AI_EXTRACTION,
+            feature_class=FeatureClass.BUILDING,
+            authority="MSFT", licence="CDLA Permissive 2.0 / ODbL", accuracy_m=2.0, vintage="2026",
+            id_fields=("ms_building_id",),
+            role="candidate", max_features=max_features,
+            tier="official", platform="Microsoft Azure Blob Storage (direct corporate open dataset)",
+            original_format="Gzipped GeoJSONL", coverage="Pan-India quadkey 123312203 (clipped to AOI)",
+            transformation="Streamed and clipped to AOI bbox",
+        ),
     ]

@@ -24,6 +24,12 @@ export interface WardLocation {
   zoom: number;
   parcelCountApprox: number;
   majorStreets?: string[];
+  /**
+   * True when this WardLocation was constructed on the fly from a search result rather than
+   * picked from the curated AVAILABLE_WARDS list — lets the UI be honest that its taluk/name
+   * fields come from a geocoder, not a verified jurisdiction record.
+   */
+  isSearchedLocation?: boolean;
 }
 
 export const AVAILABLE_WARDS: WardLocation[] = [
@@ -205,34 +211,6 @@ export const AVAILABLE_WARDS: WardLocation[] = [
     zoom: 15.0,
     parcelCountApprox: 1980,
     majorStreets: ["Luz Church Road", "Kutchery Road", "R.K. Mutt Road"],
-  },
-  // Pan-India Synthesized Nodes
-  {
-    id: "Delhi",
-    name: "NCT Delhi (Connaught Place)",
-    taluk: "New Delhi",
-    center: [77.216, 28.632],
-    zoom: 15.0,
-    parcelCountApprox: 8500,
-    majorStreets: ["Connaught Circle", "Parliament Street", "Barakhamba Road"],
-  },
-  {
-    id: "Mumbai",
-    name: "Maharashtra (Nariman Point)",
-    taluk: "Mumbai City",
-    center: [72.823, 18.925],
-    zoom: 15.0,
-    parcelCountApprox: 12000,
-    majorStreets: ["Marine Drive", "Madam Cama Road", "Veer Nariman Road"],
-  },
-  {
-    id: "Bengaluru",
-    name: "Karnataka (Vidhana Soudha)",
-    taluk: "Bengaluru Urban",
-    center: [77.594, 12.979],
-    zoom: 15.0,
-    parcelCountApprox: 9800,
-    majorStreets: ["Ambedkar Veedhi", "Cubbon Park Road", "Raj Bhavan Road"],
   },
   {
     id: "Anna Salai",

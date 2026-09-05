@@ -32,7 +32,8 @@ def main() -> int:
         out_dir=args.out,
         checkpoint_dir=None if args.no_checkpoints else os.path.join(args.out, ".ckpt"),
         parcel_pairs=(("TNGIS_CADASTRE", "NCSCM_CADASTRE"),),
-        building_pairs=(("GCC_BUILDINGS", "GOOGLE_OPEN_BUILDINGS"),),
+        building_pairs=(("GCC_BUILDINGS", "GOOGLE_OPEN_BUILDINGS"),
+                         ("GCC_BUILDINGS", "MS_BUILDINGS_TN")),
     )
     specs = layers(args.data, args.max_features)
     pipe = HarmonisationPipeline(specs, cfg)

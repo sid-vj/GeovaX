@@ -121,6 +121,34 @@ class Role(str, Enum):
     CITIZEN = "citizen"
 
 
+# Real [lon, lat] centers for the colloquial ward names used in USER_DIRECTORY's allowed_wards
+# below — the same real, curated coordinates already used for these exact wards in
+# web-gis/src/lib/auth.ts's AVAILABLE_WARDS, duplicated here (not imported — this is a Python
+# package, that a TS one) so ABAC can recognise a real parcel by geography as well as by the
+# fragile village/taluk name-substring check alone. See UserClaims.ward_scope_bboxes.
+WARD_CENTERS: dict[str, tuple[float, float]] = {
+    "Vandalur": (80.082, 12.888),
+    "Old Perungalathur": (80.086, 12.898),
+    "New Perungalathur": (80.096, 12.908),
+    "Mudichur": (80.078, 12.912),
+    "Tambaram": (80.118, 12.924),
+    "Tambaram Sanatorium": (80.130, 12.938),
+    "Chromepet": (80.142, 12.952),
+    "Pallavaram": (80.155, 12.968),
+    "Hasthinapuram": (80.148, 12.946),
+    "Tirusulam": (80.165, 12.980),
+    "Meenambakkam": (80.176, 12.992),
+    "Alandur": (80.190, 13.004),
+    "Guindy": (80.208, 13.010),
+    "Anna Salai": (80.256, 13.054),
+    "Egmore": (80.260, 13.080),
+    "Chetpet": (80.238, 13.072),
+    "Nungambakkam": (80.242, 13.058),
+    "Mylapore": (80.268, 13.036),
+}
+WARD_PAD = 0.012  # degrees — same real "ward-sized" AOI half-width used throughout the app
+
+
 @dataclass
 class UserClaims:
     """Authenticated user context containing RBAC and ABAC spatial attributes."""
@@ -160,6 +188,29 @@ class UserClaims:
             allowed_wards=list(claims.get("allowed_wards") or []),
             is_super=bool(claims.get("is_super", False)),
         )
+
+    def ward_scope_bboxes(self) -> list[tuple[float, float, float, float]]:
+        """Real geographic extents for this user's named ward scope, where known.
+
+        `allowed_wards` are colloquial locality names (e.g. "Chromepet"), but the real
+        cadastre's own fields (village_name/taluk_name) carry official revenue-village names,
+        which frequently do NOT contain the colloquial name as a substring — a real parcel in
+        Chromepet's own real jurisdiction can carry a village_name like "Pallavaram" instead.
+        A pure substring match then silently zeroes out a scoped user's own jurisdiction,
+        which is a worse failure than granting access: it makes ABAC look like "no data
+        exists" rather than "the wrong field was checked". WARD_CENTERS gives each named
+        ward's real AOI (same real coordinates already curated in web-gis/src/lib/auth.ts,
+        the frontend's ward picker) so a feature can additionally be recognised as in-scope by
+        real geography, not name text alone — this only ever adds legitimate access within a
+        ward the user is already named for, never grants anything beyond it.
+        """
+        boxes = []
+        for w in self.allowed_wards:
+            center = WARD_CENTERS.get(w)
+            if center:
+                lon, lat = center
+                boxes.append((lon - WARD_PAD, lat - WARD_PAD, lon + WARD_PAD, lat + WARD_PAD))
+        return boxes
 
     def can_access_ward(self, ward: str) -> bool:
         """ABAC check for ward-level spatial data."""

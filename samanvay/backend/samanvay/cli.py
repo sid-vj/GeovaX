@@ -1,8 +1,8 @@
 """Command-line entry point.
 
     samanvay run       --aoi mid --out out/chennai
-    samanvay serve     --out out/chennai
-    samanvay verify    --out out/chennai
+    samanvay serve     --out out/chennai_metro
+    samanvay verify    --out out/chennai_metro
     samanvay describe  EPSG:24383
 """
 from __future__ import annotations
@@ -65,13 +65,13 @@ def main() -> int:
     p.set_defaults(fn=_run)
 
     p = sub.add_parser("serve", help="serve the OGC API and the console")
-    p.add_argument("--out", default="out/chennai")
+    p.add_argument("--out", default="out/chennai_metro")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8000)
     p.set_defaults(fn=_serve)
 
     p = sub.add_parser("verify", help="verify the provenance ledger")
-    p.add_argument("--out", default="out/chennai")
+    p.add_argument("--out", default="out/chennai_metro")
     p.set_defaults(fn=_verify)
 
     p = sub.add_parser("describe", help="describe a coordinate reference system")

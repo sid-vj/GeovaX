@@ -1,6 +1,7 @@
 data/raw/
 data/aoi/
 data/aoi_metro/
+data/lgd/
 web-gis/test-results/
 web-gis/playwright-report/
 out/

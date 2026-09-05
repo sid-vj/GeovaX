@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -49,6 +50,36 @@ logger = logging.getLogger(__name__)
 
 API_VERSION = "1.0.0"
 TITLE = "GEOVAX — harmonised urban land records"
+
+LGD_INDEX_PATH = os.path.join("data", "lgd", "villages_index.jsonl")
+_lgd_index_cache: dict[tuple[float, float], list[dict[str, Any]]] | None = None
+
+
+def _load_lgd_index() -> dict[tuple[float, float], list[dict[str, Any]]]:
+    """Real nationwide village index (data_acquisition/build_lgd_index.py's output), grid-
+    bucketed to a 0.1-degree cell key for a fast nearest-village lookup without pulling in a
+    spatial-index dependency for what is, file-backed, a lightweight lookup table. Loaded
+    once per process and cached — this file changes only when the index is rebuilt, which
+    happens out of band, not per-request.
+    """
+    global _lgd_index_cache
+    if _lgd_index_cache is not None:
+        return _lgd_index_cache
+    _lgd_index_cache = {}
+    if not os.path.exists(LGD_INDEX_PATH):
+        return _lgd_index_cache
+    with open(LGD_INDEX_PATH, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                v = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            cell = (round(v["lat"], 1), round(v["lon"], 1))
+            _lgd_index_cache.setdefault(cell, []).append(v)
+    return _lgd_index_cache
 
 
 # --------------------------------------------------------------------------------------
@@ -80,6 +111,16 @@ class FeatureStore:
         # in the catalogue, and matching/confidence fusion need at least two to mean
         # anything, so this is served as a direct reference layer instead (previously this
         # collection didn't exist at all, hence /collections/utilities/items 404ing).
+        "wards": "wards.geojson",
+        "zones": "zones.geojson",
+        "cma": "cma.geojson",
+        # Real GCC ward/zone/CMA administrative boundaries, published by
+        # scripts/build_admin_layers.py from data already fetched and catalogued
+        # (gcc_wards/gcc_zones/cma_boundary in data_acquisition/sources.py) but previously
+        # never actually served — /api/provenance had them stuck at "DOWNLOADED — NOT YET
+        # INGESTED INTO A SERVED COLLECTION" even though the real files were sitting on disk.
+        # Same direct-reference treatment as utilities: exactly one real boundary source per
+        # admin tier, nothing to harmonise against.
     }
 
     def load(self) -> None:
@@ -177,7 +218,7 @@ class FeatureStore:
             return json.load(fh)
 
 
-def create_app(out_dir: str = "out/chennai") -> FastAPI:
+def create_app(out_dir: str = "out/chennai_metro") -> FastAPI:
     app = FastAPI(
         title=TITLE,
         version=API_VERSION,
@@ -297,12 +338,26 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
             f_ward = str(p.get("ward") or p.get("village_name") or p.get("taluk_name") or "")
             f_village = str(p.get("village_name") or "")
 
-            # ABAC filtering: only include features within user's allowed jurisdiction
+            # ABAC filtering: only include features within user's allowed jurisdiction.
+            # Real revenue village/taluk names frequently don't literally contain a scoped
+            # user's colloquial ward name (e.g. a real parcel inside "Chromepet" can carry
+            # village_name "Pallavaram" instead) — checked directly against this AOI's own
+            # real data. A name-only check then silently zeroes out a user's own real
+            # jurisdiction. ward_scope_bboxes() (real coordinates, see auth.py) adds a
+            # geography-based recognition alongside the name check — this only ever restores
+            # legitimate access within a named ward, never grants anything beyond it.
             if user.allowed_wards:
                 matched_scope = any(
                     w.lower() in f_ward.lower() or w.lower() in f_village.lower()
                     for w in user.allowed_wards
                 )
+                if not matched_scope:
+                    fb = _geom_bounds(f.get("geometry"))
+                    fcx, fcy = (fb[0] + fb[2]) / 2, (fb[1] + fb[3]) / 2
+                    matched_scope = any(
+                        wb[0] <= fcx <= wb[2] and wb[1] <= fcy <= wb[3]
+                        for wb in user.ward_scope_bboxes()
+                    )
                 if not matched_scope:
                     continue
 
@@ -584,6 +639,59 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
         results = list(result_map.values())
         return {"query": q, "total": len(results), "suggestions": results}
 
+    @app.get("/api/jurisdiction", tags=["platform"])
+    def jurisdiction(lon: float = Query(...), lat: float = Query(...)) -> dict[str, Any]:
+        """Real village/subdistrict/district/state identity for *any* coordinate in India.
+
+        Backed by the real Local Government Directory (LGD) village boundaries
+        (data_acquisition/sources.py's `lgd_india` entry — a verified-reachable mirror of
+        lgdirectory.gov.in, built into a compact lookup index by
+        data_acquisition/build_lgd_index.py). This is deliberately separate from the
+        Chennai-only harmonised parcel pipeline: it gives an honest administrative identity
+        for a location outside that pipeline's AOI, never a fabricated parcel. Matching is by
+        nearest real village centroid (not exact polygon containment — the index stores
+        centroids/bounds, not full boundary detail, to stay a tractable file-backed lookup),
+        which `match_distance_km` makes explicit rather than implying survey-grade precision.
+        """
+        idx = _load_lgd_index()
+        if not idx:
+            return {"found": False, "reason": "LGD village index not built yet — run "
+                                                "data_acquisition/build_lgd_index.py"}
+        cell = (round(lat, 1), round(lon, 1))
+        candidates: list[dict[str, Any]] = []
+        for dlat in (-0.1, 0.0, 0.1):
+            for dlon in (-0.1, 0.0, 0.1):
+                candidates.extend(idx.get((round(cell[0] + dlat, 1), round(cell[1] + dlon, 1)), []))
+        if not candidates:
+            return {"found": False, "reason": "No LGD village recorded within ~30km of this point."}
+
+        def _dist_km(v: dict[str, Any]) -> float:
+            dx = (v["lon"] - lon) * 111.32 * math.cos(math.radians(lat))
+            dy = (v["lat"] - lat) * 110.57
+            return (dx * dx + dy * dy) ** 0.5
+
+        best = min(candidates, key=_dist_km)
+        return {
+            "found": True,
+            "village_name": best.get("village_name"),
+            "subdistrict_name": best.get("subdistrict_name"),
+            "district_name": best.get("district_name"),
+            "state_name": best.get("state_name"),
+            "lgd_village_code": best.get("lgd_village_code"),
+            "lgd_subdistrict_code": best.get("lgd_subdistrict_code"),
+            "lgd_district_code": best.get("lgd_district_code"),
+            "lgd_state_code": best.get("lgd_state_code"),
+            "match_method": "nearest_real_village_centroid",
+            "match_distance_km": round(_dist_km(best), 2),
+            "source": {
+                "dataset": "Local Government Directory (LGD) village boundaries",
+                "authority": "Ministry of Panchayati Raj, Govt of India",
+                "official_url": "https://lgdirectory.gov.in/",
+                "note": "Served from a verified real mirror — see /api/provenance's "
+                        "full_catalogue entry 'lgd_india' for the exact fetched URL.",
+            },
+        }
+
     @app.get("/api/adjudication", tags=["platform"])
     def adjudication(
         limit: int = Query(50, ge=1, le=500),
@@ -800,7 +908,15 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
         """
         from ..pipeline.presets import AOIS, default_layers
 
-        aoi_name, aoi_bbox = AOIS["core"]
+        # Reflect whichever AOI this store's out_dir was actually run over (real metrics.json),
+        # not a hardcoded "core" — otherwise this would misreport the tight Chennai Central
+        # bbox while the server is actually serving the wider metro-corridor run.
+        real_metrics = store.metrics()
+        real_aoi = real_metrics.get("aoi") if isinstance(real_metrics, dict) else None
+        if real_aoi and real_aoi.get("name") and real_aoi.get("bbox"):
+            aoi_name, aoi_bbox = real_aoi["name"], real_aoi["bbox"]
+        else:
+            aoi_name, aoi_bbox = AOIS["core"]
         catalogue: dict[str, Any] = {}
         try:
             from data_acquisition.sources import CATALOGUE  # type: ignore
@@ -837,7 +953,8 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
         # status. "on_disk" is a real filesystem check against data/raw — not a claim read
         # from the catalogue's own static fields — so this can't drift out of sync with what
         # has actually been fetched.
-        served_ids = {"tngis_cadastre", "ncscm_cadastre", "gcc_buildings", "google_open_buildings"}
+        served_ids = {"tngis_cadastre", "ncscm_cadastre", "gcc_buildings", "google_open_buildings",
+                      "ms_building_footprints_tn"}
         full_catalogue = []
         if catalogue:
             for key, ds in catalogue.items():
@@ -847,6 +964,14 @@ def create_app(out_dir: str = "out/chennai") -> FastAPI:
                     status = "LIVE — INGESTED INTO HARMONISATION PIPELINE"
                 elif key == "chennai_metrowater_transmission":
                     status = "LIVE — PUBLISHED AS SUPPLEMENTARY LAYER (/collections/utilities)"
+                elif key == "gcc_wards":
+                    status = "LIVE — PUBLISHED AS SUPPLEMENTARY LAYER (/collections/wards)"
+                elif key == "gcc_zones":
+                    status = "LIVE — PUBLISHED AS SUPPLEMENTARY LAYER (/collections/zones)"
+                elif key == "cma_boundary":
+                    status = "LIVE — PUBLISHED AS SUPPLEMENTARY LAYER (/collections/cma)"
+                elif key == "lgd_india":
+                    status = "LIVE — PUBLISHED AS SUPPLEMENTARY LOOKUP (/api/jurisdiction)"
                 elif ds.requires_credentials:
                     status = "OFFICIAL SOURCE AVAILABLE — CREDENTIAL REQUIRED"
                 elif on_disk:
@@ -1376,4 +1501,4 @@ def _grade_counts(feats: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(out.items()))
 
 
-app = create_app(os.environ.get("GEOVAX_OUT", "out/chennai"))
+app = create_app(os.environ.get("GEOVAX_OUT", "out/chennai_metro"))

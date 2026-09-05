@@ -233,6 +233,43 @@ def clip_csv_wkt(path: str, out_path: str, box: tuple[float, float, float, float
     }
 
 
+def clip_geojsonl_gz(path: str, out_path: str, box: tuple[float, float, float, float]) -> dict[str, Any]:
+    """Clip a gzipped GeoJSONL file — the real format Microsoft Global ML Building Footprints
+    ships (despite the .csv.gz extension on the upstream blob name: each line is already a
+    real GeoJSON Feature, not a CSV row — see ms_building_footprints_tn's notes in
+    data_acquisition/sources.py). Unlike clip_csv_wkt, there is no WKT column to parse."""
+    import gzip
+
+    t0 = time.time()
+    kept = 0
+    scanned = 0
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    with gzip.open(path, "rt", encoding="utf-8") as src, open(out_path, "w", encoding="utf-8") as dst:
+        for line in src:
+            scanned += 1
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            geom = obj.get("geometry") or {}
+            coords = geom.get("coordinates")
+            if not coords:
+                continue
+            b = _bounds(coords)
+            if b is None or not _hits(b, box):
+                continue
+            obj.setdefault("properties", {})["ms_building_id"] = f"MSFT-{scanned:08d}"
+            dst.write(json.dumps(obj, separators=(",", ":")) + "\n")
+            kept += 1
+    return {
+        "input": path, "output": out_path, "scanned": scanned, "kept": kept,
+        "seconds": round(time.time() - t0, 2), "bytes_out": os.path.getsize(out_path),
+    }
+
+
 def clip_geojson(path: str, out_path: str,
                  box: tuple[float, float, float, float]) -> dict[str, Any]:
     with open(path, encoding="utf-8") as fh:
@@ -270,6 +307,8 @@ PLAN = [
     ("google_open_buildings", "gobi_3a5_buildings.csv.gz", "buildings_gob.geojsonl", "csv_wkt_gz"),
     ("gcc_wards", "chennai_wards.geojson", "wards_gcc.geojson", "geojson"),
     ("gcc_zones", "chennai_zones.geojson", "zones_gcc.geojson", "geojson"),
+    ("cma_boundary", "chennai_cma.geojson", "cma_gcc.geojson", "geojson"),
+    ("ms_building_footprints_tn", "ms_buildings_quadkey_123312203.csv.gz", "buildings_ms.geojsonl", "geojsonl_gz"),
 ]
 
 
@@ -307,6 +346,8 @@ def main() -> int:
             stats = clip_parquet(src_path, out_path, aoi.bbox)
         elif kind == "csv_wkt_gz":
             stats = clip_csv_wkt(src_path, out_path, aoi.bbox)
+        elif kind == "geojsonl_gz":
+            stats = clip_geojsonl_gz(src_path, out_path, aoi.bbox)
         else:
             stats = clip_geojson(src_path, out_path, aoi.bbox)
         ds = CATALOGUE[key]

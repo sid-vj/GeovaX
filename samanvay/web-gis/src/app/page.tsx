@@ -3,6 +3,38 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { PRESET_USERS, AVAILABLE_WARDS, UserProfile, WardLocation } from '../lib/auth';
 
+// Standard ray-casting point-in-polygon test, used to find which real GCC ward/zone polygon
+// (from /collections/wards or /collections/zones) actually contains a selected point — no
+// mapping library is loaded client-side for this, so it's implemented directly.
+function pointInRing(pt: [number, number], ring: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const intersects = ((yi > pt[1]) !== (yj > pt[1])) &&
+      (pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function pointInFeatureGeometry(pt: [number, number], geometry: any): boolean {
+  if (!geometry) return false;
+  if (geometry.type === 'Polygon') {
+    const rings: number[][][] = geometry.coordinates;
+    if (!rings.length || !pointInRing(pt, rings[0])) return false;
+    // Any hole (ring index > 0) that contains the point excludes it from this polygon.
+    for (let i = 1; i < rings.length; i++) {
+      if (pointInRing(pt, rings[i])) return false;
+    }
+    return true;
+  }
+  if (geometry.type === 'MultiPolygon') {
+    return (geometry.coordinates as number[][][][]).some((poly) => pointInFeatureGeometry(pt, { type: 'Polygon', coordinates: poly }));
+  }
+  return false;
+}
+
 export default function WebGISPage() {
   const [currentUser, setCurrentUser] = useState<UserProfile>(PRESET_USERS[1]); // Tahsildar (Vandalur – Guindy Corridor)
   const [selectedWard, setSelectedWard] = useState<WardLocation>(AVAILABLE_WARDS.find(w => w.id === 'Anna Salai') || AVAILABLE_WARDS[0]); // Default Anna Salai
@@ -67,6 +99,14 @@ export default function WebGISPage() {
   // Real per-jurisdiction utility network segments (CMWSSB water transmission mains),
   // bbox-scoped the same way as buildings — each entry is a real feature's properties.
   const [wardUtilities, setWardUtilities] = useState<any[]>([]);
+  // Real Greater Chennai Corporation ward/zone boundary (Ward_No/Zone_Name), when the
+  // selected point falls inside one — null means no real boundary was found there, not that
+  // the lookup failed silently.
+  const [realWardInfo, setRealWardInfo] = useState<{ wardNo: string | number; zoneName: string; zoneNo: string } | null>(null);
+  // Real nationwide village/taluk/district/state identity from the LGD index — populated for
+  // ANY location, not just the harmonised Chennai AOI. null means the lookup found nothing
+  // within range, not that the request failed silently.
+  const [realJurisdiction, setRealJurisdiction] = useState<any>(null);
   // Real client-side query timestamp for the parcels/buildings fetch, used only for the
   // honest "0 verified records found / Query time: …" messaging — never a data value itself.
   const [wardQueryTime, setWardQueryTime] = useState<string | null>(null);
@@ -302,7 +342,34 @@ export default function WebGISPage() {
     }
   };
 
+  // 3b. Fetch the real village/taluk/district/state identity for the selected point from the
+  // nationwide Local Government Directory index — this is what lets a location anywhere in
+  // India (not just the ~20 Chennai wards) show a real administrative identity instead of a
+  // bare empty state when it has no harmonised parcel data.
+  const fetchRealJurisdiction = async (ward: WardLocation) => {
+    try {
+      const [lon, lat] = ward.center;
+      const res = await fetch(`http://127.0.0.1:8000/api/jurisdiction?lon=${lon}&lat=${lat}`);
+      if (res.ok) {
+        const data = await res.json();
+        setRealJurisdiction(data.found ? data : null);
+      } else {
+        setRealJurisdiction(null);
+      }
+    } catch (err) {
+      console.error('Failed fetching real jurisdiction lookup', err);
+      setRealJurisdiction(null);
+    }
+  };
+
   // 4. Handle Street/Landmark Selection from Search
+  // Every search result — the internal cadastral index or the worldwide Photon geocoder —
+  // must become the active selection, not just fly the map there. Previously a hit outside
+  // AVAILABLE_WARDS left `selectedWard` stale, so Dossier/Telemetry kept showing the
+  // *previous* location's data under the new place's name. Falling back to a WardLocation
+  // built from the search hit's own real fields (not a curated entry) is what makes the
+  // honest wardOutsidePipelineAoi check downstream work for any real place, not just the
+  // ~20 hardcoded wards.
   const handleSelectStreetSuggestion = (item: any) => {
     setSearchQuery(item.title);
     setShowSuggestions(false);
@@ -314,6 +381,16 @@ export default function WebGISPage() {
 
     if (matchedWard) {
       setSelectedWard(matchedWard);
+    } else if (item.centroid) {
+      setSelectedWard({
+        id: item.title,
+        name: item.title,
+        taluk: item.taluk || item.locality || 'Unknown (from search result)',
+        center: item.centroid as [number, number],
+        zoom: item.zoom || 16.5,
+        parcelCountApprox: 0,
+        isSearchedLocation: true,
+      });
     }
     setSelectedStreet(item.title);
 
@@ -445,7 +522,12 @@ export default function WebGISPage() {
     const myToken = ++updateMapDataToken.current;
     setWardQueryTime(new Date().toISOString());
 
-    if (user.wardScope && user.wardScope.length > 0 && ward.id !== 'all') {
+    // A searched location's id is never one of a scoped user's curated wardScope names, so
+    // this client-side check can't judge it either way — only evaluate it for a known
+    // catalogue ward. Real ABAC enforcement is server-side (app.py's allowed_wards filter)
+    // and applies regardless of what this banner says.
+    const isKnownCatalogueWard = AVAILABLE_WARDS.some((w) => w.id === ward.id);
+    if (user.wardScope && user.wardScope.length > 0 && ward.id !== 'all' && isKnownCatalogueWard) {
       const hasPermission = user.wardScope.some((w) => w.toLowerCase() === ward.id.toLowerCase());
       if (!hasPermission) {
         setAccessAlert(`⚠️ ABAC Notice: ${user.name} is not authorized for ${ward.name}. Read-only inspection.`);
@@ -465,8 +547,13 @@ export default function WebGISPage() {
     });
 
     try {
-      const wardParam = ward.id !== 'all' ? `&ward=${encodeURIComponent(ward.id)}` : '';
-      const url = `http://127.0.0.1:8000/collections/parcels/items?limit=15000&min_confidence=0${wardParam}`;
+      // Real bbox math (not a ward-name string match) so this works for any coordinate —
+      // a searched location, not just one of the ~20 curated ward names — matching the same
+      // pad/bbox this function already uses for the buildings/utilities calls below.
+      const pad = ward.id === 'all' ? 0.08 : 0.012;
+      const [wcx, wcy] = ward.center;
+      const bboxParam = ward.id !== 'all' ? `&bbox=${wcx - pad},${wcy - pad},${wcx + pad},${wcy + pad}` : '';
+      const url = `http://127.0.0.1:8000/collections/parcels/items?limit=15000&min_confidence=0${bboxParam}`;
       const res = await fetch(url, {
         headers: { 'Authorization': `Bearer ${user.token}` },
       });
@@ -486,7 +573,7 @@ export default function WebGISPage() {
         if (map.getSource('aoi-boundary')) {
           const pad = ward.id === 'all' ? 0.08 : 0.012;
           const [cx, cy] = ward.center;
-          const aoiGeojson = {
+          let aoiGeojson: any = {
             type: 'Feature',
             geometry: {
               type: 'Polygon',
@@ -498,8 +585,40 @@ export default function WebGISPage() {
                 [cx - pad, cy - pad],
               ]],
             },
-            properties: { name: `Official AOI Extent: ${ward.name}` },
+            properties: { name: `Approximate AOI Extent: ${ward.name} (no real ward boundary found here)` },
           };
+          setRealWardInfo(null);
+
+          // Real GCC ward boundary, when the selected point actually falls inside one —
+          // replaces the fabricated padded rectangle above with the government's own real
+          // polygon rather than an approximation, and surfaces its real Ward_No/Zone_Name.
+          if (ward.id !== 'all') {
+            try {
+              const wardsRes = await fetch(
+                `http://127.0.0.1:8000/collections/wards/items?bbox=${cx - pad},${cy - pad},${cx + pad},${cy + pad}&limit=50`,
+                { headers: { 'Authorization': `Bearer ${user.token}` } }
+              );
+              if (myToken === updateMapDataToken.current && wardsRes.ok) {
+                const wardsJson = await wardsRes.json();
+                const hit = (wardsJson.features || []).find((f: any) => pointInFeatureGeometry([cx, cy], f.geometry));
+                if (hit) {
+                  aoiGeojson = {
+                    type: 'Feature',
+                    geometry: hit.geometry,
+                    properties: { name: `Greater Chennai Corporation Ward ${hit.properties?.Ward_No ?? ''} (official boundary)` },
+                  };
+                  setRealWardInfo({
+                    wardNo: hit.properties?.Ward_No ?? '—',
+                    zoneName: hit.properties?.Zone_Name ?? '—',
+                    zoneNo: hit.properties?.Zone_No ?? '—',
+                  });
+                }
+              }
+            } catch (err) {
+              console.error('Failed fetching real GCC ward boundary', err);
+            }
+          }
+          if (myToken !== updateMapDataToken.current) return;
           map.getSource('aoi-boundary').setData(aoiGeojson);
 
           // Real harmonized building count for this AOI. numberMatched reflects the full
@@ -964,6 +1083,7 @@ export default function WebGISPage() {
     if (!authReady) return;
     fetchAdjudication(currentUser, selectedWard);
     fetchWardCourtCases(selectedWard);
+    fetchRealJurisdiction(selectedWard);
     if (mapInstanceRef.current && mapInstanceRef.current.isStyleLoaded()) {
       updateMapData(selectedWard, currentUser);
     }
@@ -1082,7 +1202,12 @@ export default function WebGISPage() {
             <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
               <div>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  Select National / Regional Jurisdiction
+                  Select Chennai Pilot Ward
+                </div>
+                <div style={{ fontSize: '0.68rem', color: '#565c65', marginBottom: '6px' }}>
+                  Real harmonised data exists only for these Chennai-area wards. Use the search bar
+                  above for any other location — it will honestly show real data where it exists, or
+                  say so plainly where it doesn't.
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
                   {AVAILABLE_WARDS.filter((w) => w.id !== 'all').map((w) => (
@@ -1893,6 +2018,13 @@ export default function WebGISPage() {
                   <span style={{ color: '#565c65' }}>District:</span><strong>{wardParcels[0]?.district_name || '—'}</strong>
                   <span style={{ color: '#565c65' }}>AOI Center:</span><strong>{selectedWard.center[1].toFixed(4)}, {selectedWard.center[0].toFixed(4)}</strong>
                 </div>
+                {realWardInfo && (
+                  <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px solid #dfe1e2', display: 'grid', gridTemplateColumns: '1fr 1fr', rowGap: '2px', columnGap: '8px' }}>
+                    <span style={{ color: '#565c65' }}>GCC Ward No. (official):</span><strong>{realWardInfo.wardNo}</strong>
+                    <span style={{ color: '#565c65' }}>GCC Zone (official):</span><strong>{realWardInfo.zoneName} (Zone {realWardInfo.zoneNo})</strong>
+                    <span style={{ gridColumn: '1 / -1', color: '#8c5b00', fontSize: '0.68rem' }}>Source: Greater Chennai Corporation ward/zone boundaries (real, published)</span>
+                  </div>
+                )}
               </div>
 
               {/* Never a silent zero: this explanation comes BEFORE the stat tiles, so a bare
@@ -1908,6 +2040,21 @@ export default function WebGISPage() {
                         outside that extent, so no harmonised parcels exist for it yet — not a failed search.
                         Every tile below reads &ldquo;&mdash;&rdquo; (not applicable) rather than a misleading zero.
                       </div>
+                      {realJurisdiction && (
+                        <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px solid #ffe699' }}>
+                          <strong>Real jurisdiction here (no parcel-level data, but a real place):</strong>
+                          <div style={{ color: '#565c65', marginTop: '2px' }}>
+                            {realJurisdiction.village_name}
+                            {realJurisdiction.subdistrict_name ? `, ${realJurisdiction.subdistrict_name} taluk/block` : ''}
+                            {realJurisdiction.district_name ? `, ${realJurisdiction.district_name} district` : ''}
+                            {realJurisdiction.state_name ? `, ${realJurisdiction.state_name}` : ''}
+                            {' '}(nearest real village, {realJurisdiction.match_distance_km} km away)
+                          </div>
+                          <div style={{ color: '#8c5b00', fontSize: '0.65rem', marginTop: '2px' }}>
+                            Source: {realJurisdiction.source?.dataset} — {realJurisdiction.source?.authority}
+                          </div>
+                        </div>
+                      )}
                     </>
                   ) : (
                     <>
@@ -2305,9 +2452,20 @@ export default function WebGISPage() {
                       </div>
                     )}
                   </div>
-                  <div style={{ padding: '16px', textAlign: 'center', color: '#565c65', fontSize: '0.85rem' }}>
-                    👉 Click any parcel on the map or from the Ward list for its own live per-parcel telemetry below.
-                  </div>
+                  {wardOutsidePipelineAoi ? (
+                    <div style={{ background: '#fff9e6', border: '1px solid #ffe699', borderRadius: '4px', padding: '10px', fontSize: '0.75rem' }}>
+                      <strong>No parcel telemetry available here.</strong>
+                      <div style={{ color: '#565c65', marginTop: '2px' }}>
+                        {selectedWard.name} falls outside the real harmonisation pipeline's processed
+                        AOI ({runMetrics?.aoi?.name || 'the demo AOI'}), so there is no harmonised
+                        parcel to click yet — not a search failure.
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ padding: '16px', textAlign: 'center', color: '#565c65', fontSize: '0.85rem' }}>
+                      👉 Click any parcel on the map or from the Ward list for its own live per-parcel telemetry below.
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
@@ -2398,15 +2556,15 @@ export default function WebGISPage() {
                     <div style={{ background: '#fff9e6', borderTop: '1px solid #ffe699', padding: '6px 8px' }}>
                       <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#8c5b00', marginBottom: '4px' }}>🔍 Per-Vertex Audit Lineage</div>
                       <div style={{ color: '#565c65', fontSize: '0.7rem' }}>
-                        {/* Real per-vertex uncertainty is not produced anywhere in this pipeline —
-                            only a real, single positional-confidence component per parcel
-                            (conf_positional) exists. Falls back to "N/A" rather than a specific
-                            invented number/source, which is what this previously always showed
-                            for every parcel regardless of its real data. */}
-                        Vertex 1: <strong>SoI CORS ({selectedParcel.vertex_uncertainty_cm?.[0] ?? 'N/A'})</strong><br />
-                        Vertex 2: <strong>SoI CORS ({selectedParcel.vertex_uncertainty_cm?.[1] ?? 'N/A'})</strong><br />
-                        Vertex 3: <strong>SWAMITVA Drone ORI ({selectedParcel.vertex_uncertainty_cm?.[2] ?? 'N/A'})</strong><br />
-                        Vertex 4: <strong>DILRMP FMB Archive ({selectedParcel.vertex_uncertainty_cm?.[3] ?? 'N/A'})</strong><br />
+                        {/* No real per-vertex uncertainty or per-vertex source attribution is
+                            produced anywhere in this pipeline — only a real, single positional-
+                            confidence component per parcel (conf_positional) exists. Previously
+                            this rendered specific-looking source names (SoI CORS / SWAMITVA Drone
+                            ORI / DILRMP FMB Archive) next to every parcel regardless of its real
+                            data, which reads as fabricated precision. Stating that plainly is the
+                            honest version. */}
+                        Per-vertex source attribution is not produced by this pipeline — only a
+                        single, real positional-confidence figure exists per parcel (below).
                       </div>
                       <div style={{ color: '#8c5b00', fontSize: '0.65rem', marginTop: '4px' }}>
                         Positional confidence (real, from the harmonisation run): <strong>{selectedParcel.conf_positional != null ? `${(selectedParcel.conf_positional * 100).toFixed(1)}%` : 'N/A'}</strong>

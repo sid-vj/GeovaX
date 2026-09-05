@@ -50,7 +50,8 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
         out_dir=out_dir,
         checkpoint_dir=os.path.join(out_dir, ".ckpt"),
         parcel_pairs=(("TNGIS_CADASTRE", "NCSCM_CADASTRE"),),
-        building_pairs=(("GCC_BUILDINGS", "GOOGLE_OPEN_BUILDINGS"),),
+        building_pairs=(("GCC_BUILDINGS", "GOOGLE_OPEN_BUILDINGS"),
+                         ("GCC_BUILDINGS", "MS_BUILDINGS_TN")),
     )
     specs = default_layers(data_dir, max_features)
     pipe = HarmonisationPipeline(specs, cfg)
