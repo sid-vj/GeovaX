@@ -27,6 +27,14 @@ AOIS: dict[str, tuple[str, tuple[float, float, float, float]]] = {
     # coastal cadastre does not reach this far inland, which will show up honestly as
     # single-source (TNGIS-only) parcels there, not a bug.
     "metro": ("Chennai Metro Corridor (Vandalur–Egmore)", (80.05, 12.87, 80.29, 13.10)),
+    # A narrow real bbox verified (by direct min/max coordinate scan of the already-clipped
+    # metro-AOI files, not assumed) to contain genuine overlapping coverage from GCC_BUILDINGS,
+    # GOOGLE_OPEN_BUILDINGS and MS_BUILDINGS_TN simultaneously — small enough to run the full
+    # 12-stage DAG end-to-end on this machine's real memory budget, as a fast, complete proof
+    # that the 5th real building source actually ingests, matches and harmonises, before
+    # attempting the much larger metro-corridor run (which holds every stage's full output in
+    # memory at once and can exceed 16 GB there).
+    "msproof": ("MS Buildings Proof Tile (GCC x MS overlap corridor)", (80.134, 12.87, 80.155, 13.10)),
 }
 
 
@@ -94,5 +102,18 @@ def default_layers(data_dir: str, max_features: int | None = None) -> list[Layer
             tier="official", platform="Microsoft Azure Blob Storage (direct corporate open dataset)",
             original_format="Gzipped GeoJSONL", coverage="Pan-India quadkey 123312203 (clipped to AOI)",
             transformation="Streamed and clipped to AOI bbox",
+        ),
+        LayerSpec(
+            dataset_id="OSM_BUILDINGS_GT",
+            path=os.path.join(data_dir, "buildings_osm_gt.geojsonl"),
+            source_type=SourceType.GROUND_TRUTH,
+            feature_class=FeatureClass.BUILDING,
+            authority="OSM", licence="ODbL-1.0", accuracy_m=None, vintage="2026",
+            id_fields=("osm_id",),
+            role="reference", max_features=max_features,
+            tier="proxy", platform="Overpass API (overpass.kumi.systems)",
+            original_format="GeoJSONL (converted live from an Overpass JSON response)",
+            coverage="Chennai AOI (live-queried bbox)",
+            transformation="Live Overpass query, converted to GeoJSON, clipped to AOI bbox",
         ),
     ]

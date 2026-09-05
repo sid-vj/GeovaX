@@ -309,6 +309,7 @@ PLAN = [
     ("gcc_zones", "chennai_zones.geojson", "zones_gcc.geojson", "geojson"),
     ("cma_boundary", "chennai_cma.geojson", "cma_gcc.geojson", "geojson"),
     ("ms_building_footprints_tn", "ms_buildings_quadkey_123312203.csv.gz", "buildings_ms.geojsonl", "geojsonl_gz"),
+    ("osm_buildings_gt", "osm_buildings_gt.geojsonl", "buildings_osm_gt.geojsonl", "geojsonl"),
 ]
 
 

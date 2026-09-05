@@ -49,6 +49,15 @@ class CourtCase:
     petitioner: str
     respondent: str
     status: str  # 'Pending', 'Stay Granted', 'Disposed'
+    property_link_basis: str = "exact_survey_number_and_village_match"
+    """States exactly why this case is presented as linked to a specific parcel, never left
+    implicit. The only linkage this connector ever makes is: the real NJDG query was filtered
+    by this parcel's own village + survey_number, and the case returned by that filtered
+    query is presented as CASE EXISTS FOR THIS SURVEY NUMBER — never inferred from geographic
+    proximity to a harmonised parcel, and never upgraded to "ownership/property confirmed"
+    (a court case naming a survey number is evidence of a dispute referencing that number, not
+    proof of who legally owns it — that determination is for the court/registry, not this
+    platform)."""
 
 
 @dataclass

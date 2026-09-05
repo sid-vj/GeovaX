@@ -222,6 +222,11 @@ export default function WebGISPage() {
   // a real government/open-data source for), each with a disk-checked integration status —
   // this is what makes credential-gated/not-yet-fetched sources visible rather than hidden.
   const [fullCatalogue, setFullCatalogue] = useState<any[]>([]);
+  // Live configuration status for the credential-gated real government connectors
+  // (NJDG e-Courts, TN Registration EC, TamilNilam, NAKSHA, SoI CORS) — keyed by catalogue
+  // key, so the matrix below can show "AUTHENTICATION REQUIRED" honestly instead of a bare
+  // static label, without ever fabricating a "connected" state nothing backs.
+  const [integrationsStatus, setIntegrationsStatus] = useState<Record<string, any>>({});
   useEffect(() => {
     fetch('http://127.0.0.1:8000/api/run')
       .then((r) => (r.ok ? r.json() : null))
@@ -245,6 +250,15 @@ export default function WebGISPage() {
         if (!d) return;
         setProvenanceCatalogue(d.sources || []);
         setFullCatalogue(d.full_catalogue || []);
+      })
+      .catch(() => {});
+    fetch('http://127.0.0.1:8000/api/integrations/status')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d?.integrations) return;
+        const byKey: Record<string, any> = {};
+        for (const row of d.integrations) byKey[row.key] = row;
+        setIntegrationsStatus(byKey);
       })
       .catch(() => {});
   }, []);
@@ -1137,7 +1151,7 @@ export default function WebGISPage() {
     if (mapInstanceRef.current && mapInstanceRef.current.isStyleLoaded()) {
       const map = mapInstanceRef.current;
       if (map.getLayer('osiris-labels-layer')) {
-        map.setLayoutProperty('osiris-labels-layer', 'visibility', showGeoSatLayer || showDroneLayer ? 'visible' : 'none');
+        map.setLayoutProperty('osiris-labels-layer', 'visibility', showGeoSatLayer ? 'visible' : 'none');
       }
       if (map.getLayer('osiris-streets-layer')) {
         map.setLayoutProperty('osiris-streets-layer', 'visibility', showDroneLayer ? 'visible' : 'none');
@@ -1783,18 +1797,26 @@ export default function WebGISPage() {
             borderRadius: '6px', border: '1px solid #dfe1e2', padding: '10px 14px',
             boxShadow: '0 4px 15px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: '8px'
           }}>
+            {/* Renamed from "Bhuvan Map Layers": none of these five layers are actually
+                served by Bhuvan (they're Esri reference tiles, CMWSSB, and this pipeline's
+                own real analytics) — a name should only claim a provider that's genuinely
+                behind it. */}
             <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#1a4480', textTransform: 'uppercase' }}>
-              Bhuvan Map Layers
+              Map Layers
             </div>
-            
-            {/* Map Theme Toggle */}
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer', marginTop: '4px' }}>
+
+            {/* These two used to both drive the same "labels" layer's visibility (an OR),
+                which was redundant and, since the 3D/2D/MAP/SAT basemap switch became the
+                sole authority for the satellite/dark base layers, this first checkbox's old
+                name ("GeoSat Base Layer") no longer matched what it actually did. Split into
+                two independently real, independently named overlays instead. */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer', marginTop: '4px' }} title="Real Esri place-name/boundary reference tiles (Reference/World_Boundaries_and_Places).">
               <input type="checkbox" checked={showGeoSatLayer} onChange={(e) => setShowGeoSatLayer(e.target.checked)} style={{ accentColor: '#005ea2' }} />
-              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>GeoSat Base Layer</span>
+              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>Place Name Labels (Esri reference)</span>
             </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer' }} title="Toggles Esri's real street/place reference tiles. No drone imagery is fetched for this AOI yet — see the Data Source Matrix in the Dossier tab.">
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', cursor: 'pointer' }} title="Real Esri street-map tile overlay (World_Street_Map). No drone imagery is fetched for this AOI yet — see the Data Source Matrix in the Dossier tab.">
               <input type="checkbox" checked={showDroneLayer} onChange={(e) => setShowDroneLayer(e.target.checked)} style={{ accentColor: '#005ea2' }} />
-              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>Street &amp; Place Labels (Esri reference)</span>
+              <span style={{ fontWeight: 600, color: '#1b1b1b' }}>Street Basemap Overlay (Esri reference)</span>
             </label>
 
             <hr style={{ margin: '2px 0', border: '0', borderTop: '1px solid #dfe1e2' }} />
@@ -2400,9 +2422,11 @@ export default function WebGISPage() {
                 ) : (
                   <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.68rem', maxHeight: '260px', overflowY: 'auto' }}>
                     {fullCatalogue.map((e) => {
-                      const color = e.integration_status.startsWith('LIVE') ? '#00a91c'
-                        : e.integration_status.startsWith('OFFICIAL SOURCE AVAILABLE') ? '#8c5b00'
-                        : e.integration_status.startsWith('DOWNLOADED') ? '#005ea2'
+                      const live = integrationsStatus[e.key];
+                      const displayStatus = live ? live.status : e.integration_status;
+                      const color = displayStatus.startsWith('LIVE') || displayStatus === 'CONNECTED' ? '#00a91c'
+                        : displayStatus.startsWith('OFFICIAL SOURCE AVAILABLE') || displayStatus.startsWith('AUTHENTICATION REQUIRED') ? '#8c5b00'
+                        : displayStatus.startsWith('DOWNLOADED') ? '#005ea2'
                         : '#565c65';
                       return (
                         <div key={e.key} style={{ background: '#f4f6f9', borderRadius: '3px', padding: '5px', borderLeft: `3px solid ${color}` }}>
@@ -2410,7 +2434,7 @@ export default function WebGISPage() {
                             <span>{e.title}</span>
                           </div>
                           <div style={{ color: '#565c65' }}>{e.authority_name} · Tier: {e.tier} · {e.licence}</div>
-                          <div style={{ color }}>{e.integration_status}</div>
+                          <div style={{ color }}>{displayStatus}{live ? ` (${live.mechanism})` : ''}</div>
                           {e.official_url && <div style={{ color: '#005ea2', wordBreak: 'break-all' }}>{e.official_url}</div>}
                         </div>
                       );

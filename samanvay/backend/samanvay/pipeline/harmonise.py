@@ -250,8 +250,22 @@ class HarmonisationPipeline:
             feats: list[dict[str, Any]] = []
             for i, rf in enumerate(conn.read(spec.path, bbox=self.config.bbox,
                                              limit=spec.max_features)):
+                props = rf.properties
+                if spec.dataset_id == "MS_BUILDINGS_TN":
+                    # Microsoft's own README (github.com/microsoft/GlobalMLBuildingFootprints)
+                    # documents -1 as a placeholder meaning "no confidence score was
+                    # calculated" (pre-dates that release's scoring) / "no height estimate" —
+                    # not a real low score. Left unnormalised, ExtractionQC's
+                    # `conf < min_confidence` check reads -1 as an actual (very bad) score and
+                    # drops every real feature in a vintage that predates confidence scoring,
+                    # which is a misreading of Microsoft's sentinel, not a genuine QC failure.
+                    props = dict(props)
+                    if props.get("confidence") == -1:
+                        props["confidence"] = None
+                    if props.get("height") == -1:
+                        props["height"] = None
                 feats.append({"fid": rf.source_feature_id, "geom": rf.geometry,
-                              "props": rf.properties})
+                              "props": props})
             ds.feature_count = len(feats)
             self.registry.register(ds)
             out["layers"][spec.dataset_id] = {"spec": spec, "features": feats,

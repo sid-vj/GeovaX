@@ -191,7 +191,8 @@ test.describe('GeovaX — jurisdiction-driven registry panel', () => {
     await selectWard(page, 'Egmore');
     const text = await page.locator('body').innerText();
     // These were previously mislabelled/dead controls; assert the honest labels are present.
-    expect(text).toContain('Street & Place Labels (Esri reference)');
+    expect(text).toContain('Street Basemap Overlay (Esri reference)');
+    expect(text).toContain('Place Name Labels (Esri reference)');
     expect(text).toContain('CMWSSB Utility Network');
     expect(text).toContain('Per-Vertex Uncertainty');
     expect(text).toContain('not computed by this pipeline');

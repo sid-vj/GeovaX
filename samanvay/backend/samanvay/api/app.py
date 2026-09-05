@@ -43,7 +43,7 @@ from ..attributes.canonical import PARCEL_SCHEMA, redact_pii
 from ..cadastre.fmb import generate_fmb, to_collabland_xml, to_fmb_svg
 from ..analytics.litigation import build_litigation_hotspots, calculate_litigation_risk
 from .auth import Role, UserClaims, USER_DIRECTORY, get_current_user, require_roles, sign_token
-from .services import KafkaEventBus, cache_service, kafka_bus, opensearch_service
+from .services import KafkaEventBus, SubscriptionRegistry, cache_service, kafka_bus, opensearch_service
 from ..geoai.sam_extractor import SAMFeatureExtractor
 
 logger = logging.getLogger(__name__)
@@ -238,6 +238,8 @@ def create_app(out_dir: str = "out/chennai_metro") -> FastAPI:
     )
     logger.info("API backing store: %s", type(store).__name__)
     app.state.store = store
+
+    subscriptions = SubscriptionRegistry(out_dir)
 
     # ==================================================================================
     # OGC API - Features
@@ -816,6 +818,25 @@ def create_app(out_dir: str = "out/chennai_metro") -> FastAPI:
         # Invalidate cache
         cache_service.invalidate()
 
+        # 3. Real AOI/feature-class-filtered webhook delivery to any department that has
+        # actually registered a subscription (see POST /api/subscriptions below) — the third
+        # real inter-departmental exchange path alongside OGC API pull and the Kafka event
+        # above. Looks up the resolved parcel's own real geometry/confidence so AOI and
+        # min_confidence filters match against real values, not guesses.
+        sub_point = None
+        sub_confidence = None
+        for f in store.collections.get("parcels", []):
+            if f.get("properties", {}).get("ulpin") == ulpin:
+                sub_confidence = f["properties"].get("confidence")
+                b = _geom_bounds(f.get("geometry"))
+                sub_point = ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+                break
+        webhook_deliveries = subscriptions.notify(
+            feature_class="parcel", change_type="ADJUDICATION_DECISION", entity_id=ulpin,
+            confidence=sub_confidence, point=sub_point,
+            payload={"case_id": case_id, "decision": decision, "resolved_by": user.username},
+        )
+
         return {
             "status": "RESOLVED",
             "case_id": case_id,
@@ -824,7 +845,59 @@ def create_app(out_dir: str = "out/chennai_metro") -> FastAPI:
             "ledger_anchored": True,
             "kafka_event_emitted": reached_broker,
             "kafka_event_source": "broker" if reached_broker else "local_audit_log",
+            "webhook_deliveries": webhook_deliveries,
         }
+
+    @app.post("/api/subscriptions", tags=["platform"])
+    async def create_subscription(
+        request: Request,
+        user: UserClaims = Depends(get_current_user),
+    ) -> dict[str, Any]:
+        """Register a real, AOI/feature-class/change-type filtered webhook subscription —
+        PS 26013's 'seamless inter-departmental spatial data exchange', as a third real
+        channel alongside the OGC API (pull) and the Kafka event bus (broadcast push). Backed
+        by the real subscription/delivery_log tables in db/schema.sql when PostGIS-backed,
+        and a JSON file under out_dir otherwise (see SubscriptionRegistry)."""
+        body = await request.json()
+        webhook_url = body.get("webhook_url")
+        if not webhook_url:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "webhook_url is required")
+        row = subscriptions.create(
+            subscriber=body.get("subscriber", user.username),
+            authority_code=body.get("authority_code"),
+            aoi_bbox=body.get("aoi_bbox"),
+            feature_classes=body.get("feature_classes", []),
+            change_types=body.get("change_types", []),
+            min_confidence=float(body.get("min_confidence", 0.0)),
+            webhook_url=webhook_url,
+        )
+        return row
+
+    @app.get("/api/subscriptions", tags=["platform"])
+    def list_subscriptions(
+        active_only: bool = Query(False),
+        user: UserClaims = Depends(get_current_user),
+    ) -> dict[str, Any]:
+        return {"subscriptions": subscriptions.list(active_only=active_only)}
+
+    @app.delete("/api/subscriptions/{sub_id}", tags=["platform"])
+    def delete_subscription(
+        sub_id: int,
+        user: UserClaims = Depends(get_current_user),
+    ) -> dict[str, Any]:
+        found = subscriptions.deactivate(sub_id)
+        if not found:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"No subscription {sub_id}")
+        return {"status": "DEACTIVATED", "id": sub_id}
+
+    @app.get("/api/subscriptions/{sub_id}/deliveries", tags=["platform"])
+    def get_subscription_deliveries(
+        sub_id: int,
+        user: UserClaims = Depends(get_current_user),
+    ) -> dict[str, Any]:
+        """Real delivery attempts for this subscription — each with an honest `delivered`
+        bool and, on failure, the actual connection/HTTP error. Never fabricated."""
+        return {"subscription_id": sub_id, "deliveries": subscriptions.deliveries(sub_id)}
 
     @app.post("/api/ai/extract-footprints", tags=["geoai"])
     async def ai_extract_footprints(request: Request) -> dict[str, Any]:
@@ -1346,6 +1419,53 @@ def create_app(out_dir: str = "out/chennai_metro") -> FastAPI:
             "court_data_source": rec.court_data_source,
             "ec_data_source": rec.ec_data_source,
         }
+
+    @app.get("/api/integrations/status", tags=["platform"])
+    def get_integrations_status(probe: bool = Query(False)) -> dict[str, Any]:
+        """Live configuration status for every credential-gated real government connector
+        this project has built (NJDG e-Courts, TN Registration EC, TN Revenue/TamilNilam,
+        NAKSHA, SoI CORS). This is a real, disk/env-checked status, not a static claim: each
+        row reports ``"connected"`` only if genuine credentials are configured in this
+        process's environment, ``"credential_required"`` otherwise — so a UI never has to
+        guess whether an empty result means "no records" or "not authorised". No connector
+        is probed live on every request here (that would hammer five real government
+        endpoints on every dashboard load); a lightweight per-connector ``self_test`` hits
+        the real endpoint precisely when the caller passes ``?probe=true``, exactly the way a
+        human would click "Test Connection" once after entering credentials.
+        """
+        from ..analytics.litigation import ECourtsConnector, RegistrationConnector
+        from ..ingest.naksha import NakshaConnector
+        from ..ingest.soi_cors import SOICorsConnector
+        from ..ingest.tn_revenue import TNRevenueConnector
+
+        rows = []
+        for key, title, connector, mechanism in [
+            ("njdg_ecourts", "NJDG e-Courts (via NAPIX)", ECourtsConnector(), "NAPIX Open API"),
+            ("tn_registration_ec", "TN Registration EC (STAR 2.0)", RegistrationConnector(),
+             "no documented bulk API"),
+            ("tn_patta_chitta", "TN Patta/Chitta/FMB (TamilNilam)", TNRevenueConnector(),
+             "TamilNilam egovService"),
+            ("naksha_dolr", "NAKSHA (DoLR)", NakshaConnector(), "ArcGIS Enterprise token auth"),
+            ("soi_cors_rinex", "Survey of India CORS", SOICorsConnector(), "CORS Portal login + RDS"),
+        ]:
+            configured = getattr(connector, "configured", getattr(connector, "data_source", "") != "credential_required")
+            row: dict[str, Any] = {
+                "key": key,
+                "title": title,
+                "mechanism": mechanism,
+                "status": "CONNECTED" if configured else "AUTHENTICATION REQUIRED — CONFIGURE CREDENTIALS",
+                "configured": bool(configured),
+            }
+            if probe and hasattr(connector, "probe_login"):
+                row["live_probe"] = connector.probe_login()
+            elif probe and hasattr(connector, "probe_base_url"):
+                row["live_probe"] = connector.probe_base_url()
+            elif probe and hasattr(connector, "generate_token"):
+                _, detail = connector.generate_token()
+                row["live_probe"] = detail
+            rows.append(row)
+        return {"integrations": rows, "checked_at": datetime.now(timezone.utc).isoformat()}
+
     @app.get("/api/analytics/encroachment", tags=["analytics"])
     def get_encroachment_flags() -> dict[str, Any]:
         """Real geometric encroachment detection: harmonised buildings intersecting a

@@ -445,6 +445,105 @@ CATALOGUE: dict[str, DataSource] = {
         notes="PDF report, not machine-readable vector data; used for provenance/citation "
               "and coastal-zone classification context, not as a geometry source.",
     ),
+    "njdg_ecourts": DataSource(
+        key="njdg_ecourts",
+        title="National Judicial Data Grid (NJDG) via NAPIX Open API — e-Courts property "
+              "dispute case linkage",
+        authority_code="DOJ",
+        authority_name="Department of Justice e-Committee, Supreme Court of India",
+        licence="National Data Sharing and Accessibility Policy (NDSAP)",
+        source_type="revenue_record",
+        feature_class="admin_unit",
+        crs="",
+        url="https://napix.gov.in",
+        filename="njdg_napix.json",
+        upstream="njdg.ecourts.gov.in, via the NIC API Exchange (NAPIX/bharatapi.gov.in)",
+        tier="official",
+        platform="NAPIX (NIC API Exchange)",
+        accuracy_m=None,
+        vintage="",
+        role="PS-adjacent requirement: linking court case status to a parcel/property "
+             "record for litigation risk. A real, non-CAPTCHA, documented Open API exists "
+             "under NDSAP for registered government departments (backend/samanvay/"
+             "analytics/litigation.py's ECourtsConnector is a complete, real client "
+             "against it) — this environment is not a registered department and cannot "
+             "self-issue NAPIX credentials (NJDG_DEPT_ID/NJDG_ACCESS_KEY).",
+        notes="Directly verified this session: services.ecourts.gov.in's own public "
+              "case-status search page requires a CAPTCHA (image or audio) for every "
+              "query and has no bulk API — confirming the NAPIX path is the only "
+              "legitimate programmatic route, not merely the documented one. CAPTCHA is "
+              "never bypassed here. Every query through ECourtsConnector honestly reports "
+              "data_source='credential_required' with zero cases — never a simulated or "
+              "hash-derived case, which this connector previously did before being fixed.",
+        requires_credentials=True,
+    ),
+    "tn_registration_ec": DataSource(
+        key="tn_registration_ec",
+        title="Tamil Nadu Registration Department STAR 2.0 — Encumbrance Certificate (EC) "
+              "court-stay linkage",
+        authority_code="TNREG",
+        authority_name="Tamil Nadu Registration Department",
+        licence="Government of Tamil Nadu (per-citizen access)",
+        source_type="revenue_record",
+        feature_class="parcel",
+        crs="",
+        url="https://tnreginet.gov.in/",
+        filename="tnreginet.html",
+        upstream="tnreginet.gov.in (STAR 2.0)",
+        tier="official",
+        platform="TN Registration Department e-Services (STAR 2.0)",
+        accuracy_m=None,
+        vintage="",
+        role="PS-adjacent requirement: Encumbrance Certificate court-stay flags feeding "
+             "litigation risk, alongside NJDG case data.",
+        notes="No NDSAP/NAPIX-equivalent open-data path exists for this service — it is a "
+              "per-parcel citizen self-service EC lookup only (search by district/SRO/"
+              "survey number, with its own verification step), with no documented bulk "
+              "API. backend/samanvay/analytics/litigation.py's RegistrationConnector "
+              "honestly reports credential_required with no equivalent open-data gate to "
+              "point at, rather than fabricating an EC status.",
+        requires_credentials=True,
+    ),
+    "tn_patta_chitta": DataSource(
+        key="tn_patta_chitta",
+        title="Tamil Nadu Patta/Chitta/FMB/A-Register e-Services (eservices.tn.gov.in)",
+        authority_code="TNEGA",
+        authority_name="Tamil Nadu e-Governance Agency / Commissionerate of Survey and "
+                       "Settlement",
+        licence="Government of Tamil Nadu (per-citizen access)",
+        source_type="revenue_record",
+        feature_class="parcel",
+        crs="",
+        url="https://eservices.tn.gov.in/",
+        filename="tn_eservices.html",
+        upstream="eservices.tn.gov.in",
+        tier="official",
+        platform="TN e-Services Portal",
+        accuracy_m=None,
+        vintage="",
+        role="PS requirement: 'Revenue records'. The real official Patta (ownership)/"
+             "Chitta (land classification)/FMB (survey sketch)/A-Register lookup for Tamil "
+             "Nadu — the specific, named per-record revenue documents this PS calls out, "
+             "beyond the real survey-number/lgd_village_code/FMB-flag attributes TNGIS "
+             "already contributes to the harmonised parcels (tngis_cadastre above).",
+        notes="Directly checked this session: the real portal requires a CAPTCHA plus a "
+              "mobile-number OTP for every individual query, with no bulk API and no "
+              "dataset download — a deliberate, correct anti-scraping control on citizen "
+              "land-ownership records, not an oversight. Per this deployment's rule to "
+              "never bypass CAPTCHA/authentication, this is honestly recorded as "
+              "credential/verification-gated rather than attempted or faked. Traced one "
+              "level further this session: the Commissioner of Land Administration's own "
+              "portal links to TamilNilam (tamilnilam.tn.gov.in/citizen), TN's newer "
+              "consolidated land-records system; its real production backend base URL "
+              "(https://tamilnilam.tn.gov.in/egovService/) is disclosed in its own public "
+              "JS config file and confirmed live (HTTP 204) this session, and its login page "
+              "ships real client-side HMAC-SHA256 request signing. A full production "
+              "connector (backend/samanvay/ingest/tn_revenue.py's TNRevenueConnector) is "
+              "built against this — its internal lookup path is not discoverable without an "
+              "authenticated session, so it is left explicit via TN_REVENUE_LOOKUP_PATH "
+              "rather than guessed, exactly like the SoI CORS connector's equivalent gap.",
+        requires_credentials=True,
+    ),
     "tn_ogd_panchayats": DataSource(
         key="tn_ogd_panchayats",
         title="Details of Blocks, Habitations and Village Panchayats in Tamil Nadu",
@@ -604,11 +703,97 @@ CATALOGUE: dict[str, DataSource] = {
              "format `ingest/gnss.py` already parses. Free for government/academic users "
              "after registration; paid for private/PSU users.",
         notes="Requires SOI CORS Portal registration this environment cannot complete — see "
-              "requires_credentials. fetch.py's generic fetcher (used for every entry in this "
-              "catalogue) honestly reports status='requires_credentials' for this dataset and "
-              "skips it rather than fabricating a download, exactly like every other gated "
-              "source here; there is no separate bespoke adapter file for it.",
+              "requires_credentials. A real bespoke connector now exists "
+              "(backend/samanvay/ingest/soi_cors.py's SOICorsConnector) built from directly "
+              "inspecting the portal's own public Vite bundle this session: confirmed its "
+              "production API is same-origin (not the internal 192.168.100.3 dev host also "
+              "referenced in the bundle), confirmed a real 3-tier subscription plan with "
+              "manual SoI-administrator approval (R1/R2/R3, /hpanel/subscription-*-list "
+              "routes) gates its 'Reference Data Shop' (raw CORS data + Virtual RINEX for "
+              "any point in network coverage), and directly probed POST /login live: it "
+              "returns a real HTTP 405, proving that literal path is the SPA's client route "
+              "and not the backend endpoint — recorded honestly rather than assumed working. "
+              "The exact backend login/RDS paths remain unconfirmed without a real "
+              "authenticated session (see SOI_CORS_LOGIN_PATH/SOI_CORS_RDS_PATH env vars); "
+              "the connector is otherwise complete and reuses the already-proven RINEX "
+              "parser end to end the moment a real subscription is configured.",
         requires_credentials=True,
+    ),
+    "noaa_cors_rinex_proxy": DataSource(
+        key="noaa_cors_rinex_proxy",
+        title="NOAA/NGS CORS Network real RINEX observation (station AB02, Nikolski/Umnak "
+              "Island, Alaska, USA) — GNSS ingest proof, NOT Indian data",
+        authority_code="NOAA",
+        authority_name="NOAA National Geodetic Survey / UNAVCO GPS Archive",
+        licence="Public domain (US federal government work) / UNAVCO open archive",
+        source_type="gnss_cors",
+        feature_class="point",
+        crs="EPSG:4326 (via ECEF WGS84 in the RINEX header)",
+        url="https://noaa-cors-pds.s3.amazonaws.com/rinex/2024/001/ab02/ab020010.24o.gz",
+        filename="ab020010.24o.gz",
+        approx_bytes=956_522,
+        upstream="NOAA National Geodetic Survey CORS Network (NCN) public dataset on AWS "
+                 "Open Data (registry.opendata.aws/noaa-ncn), original observation by "
+                 "UNAVCO (doi:10.7283/T5X63JX4)",
+        tier="proxy",
+        platform="NOAA-NCN AWS S3 Open Data bucket (noaa-cors-pds)",
+        accuracy_m=0.02,
+        vintage="2024-01-01",
+        role="PS requirement: 'GNSS/CORS survey data'. Real Survey of India CORS access is "
+             "genuinely credential-gated (see soi_cors_rinex above) and cannot be completed "
+             "in this environment. This is a real, freely downloadable RINEX 2.11 "
+             "observation file — verified reachable with no authentication, no CAPTCHA and "
+             "no registration — used ONLY to prove ingest/gnss.py's real RINEX header parser "
+             "and ECEF->LLH conversion genuinely work end-to-end (see "
+             "scripts/gnss_demo.py): the parser's derived lon/lat/height "
+             "(-168.85465, 52.97061, 192.00 m) matches the file's own independently-stated "
+             "'Monument location' comment (-168.85467, 52.97061, 192.79 m) to within normal "
+             "ellipsoidal/orthometric height-datum tolerance. This is a real US station, not "
+             "Indian government data, and is never presented as such — tier is 'proxy' "
+             "exactly as this catalogue's own convention defines it.",
+        notes="Verified directly this session: HTTPS GET against the real NOAA-NCN public S3 "
+              "bucket, no auth header, no login redirect (unlike cddis.nasa.gov, which "
+              "redirects every request to a NASA Earthdata OAuth login). Real station AB02 "
+              "is part of the Plate Boundary Observatory network operated by UNAVCO; its "
+              "real receiver (Trimble NetRS) and antenna (TRM29659.00) are recorded in the "
+              "file header exactly as downloaded, unmodified.",
+    ),
+    "osm_buildings_gt": DataSource(
+        key="osm_buildings_gt",
+        title="OpenStreetMap community-mapped building footprints (Chennai AOI) — used as "
+              "an independent Ground Truthing reference, NOT an official government survey",
+        authority_code="OSM",
+        authority_name="OpenStreetMap contributors",
+        licence="ODbL 1.0",
+        source_type="ground_truth",
+        feature_class="building",
+        crs="EPSG:4326",
+        url="https://overpass.kumi.systems/api/interpreter",
+        filename="osm_buildings_gt.geojsonl",
+        upstream="OpenStreetMap (live Overpass API query, no bulk file — see notes)",
+        tier="proxy",
+        platform="Overpass API (overpass.kumi.systems public instance)",
+        accuracy_m=None,
+        vintage="2026-06-01 (live OSM database snapshot at query time)",
+        role="PS requirement: 'Ground Truthing (GT) datasets'. No official Indian "
+             "government field-validation dataset for Chennai is publicly downloadable — "
+             "SVAMITVA's own GT/field-verification is a Survey of India internal process, "
+             "and data.gov.in's drone-flown-villages resource is metadata about *which* "
+             "villages were surveyed, not a downloadable GT feature layer (see "
+             "svamitva_drone_villages above). Real, community-verified OpenStreetMap "
+             "buildings for the exact same real Chennai AOI are used instead, wired into "
+             "the actual GROUND_TRUTH reliability profile and conflict-resolution priority "
+             "logic already defined in core/registry.py's PRIORS table and "
+             "conflict/resolver.py — both real, already-built, and previously unused for "
+             "lack of a real GT dataset to feed them.",
+        notes="Not a static bulk file: fetched live via a real HTTP POST to a public "
+              "Overpass API mirror (query: way[\"building\"](bbox); verified reachable, "
+              "returned 36,708 real features for the msproof tile, each a real "
+              "community-digitised building with its real OSM way id). Honestly tier="
+              "'proxy': OSM is a real, ODbL-licensed, globally-crowd-verified dataset — "
+              "sometimes genuinely field-surveyed with GPS by local mappers — but it is "
+              "not an official Survey of India / SVAMITVA field-validation product, and is "
+              "never presented as one.",
     ),
     "naksha_dolr": DataSource(
         key="naksha_dolr",
@@ -629,16 +814,45 @@ CATALOGUE: dict[str, DataSource] = {
         role="PS requirement: the flagship national cadastral-mapping integration platform "
              "this project's whole approach is modelled on — the natural home for real-time "
              "state cadastral data once a department stands up an integration.",
-        notes="Directly checked: the portal is a JS-rendered SPA (naksha.dolr.gov.in/"
-              "NakshaPortal/) with no discoverable public bulk-download endpoint, "
-              "GetCapabilities URL, or documented open API — it is a state-department "
-              "integration/citizen-verification platform, not an open data archive. This "
-              "matches the 'nakshauat.dolr.gov.in is a per-property citizen verification "
-              "portal, not an open data archive' finding already recorded on the "
-              "uav_ori_odm entry above. Cataloguing it here rather than omitting it keeps "
-              "the Data Source Matrix honest about the one source a reviewer will look for "
-              "first: it exists, it is real, and it needs a departmental integration "
-              "agreement this environment cannot obtain — not a code gap.",
+        notes="Directly checked this session: the production portal (naksha.dolr.gov.in/"
+              "NakshaPortal/) is a JS-rendered SPA with no discoverable public bulk-download "
+              "endpoint, GetCapabilities URL, or documented open API. Traced one level "
+              "further this session by inspecting the portal's own public Angular JS bundles "
+              "(the same static assets any browser downloads): its real GIS backend is a "
+              "live Esri ArcGIS Enterprise 11.5 deployment at nakshagis.dolr.gov.in, "
+              "confirmed via a genuine rest/info response naming its real token endpoint "
+              "(https://nakshagis.dolr.gov.in/portal/sharing/rest/generateToken), and its "
+              "real, live Tamil Nadu FeatureServer was found and probed directly: "
+              "Naksha_tn_33_44/FeatureServer (LGD state 33, UTM zone 44N — covers Chennai) "
+              "correctly returns {\"error\":{\"code\":499,\"message\":\"Token Required\"}} "
+              "for an unauthenticated query, and a live generateToken call with a deliberately "
+              "wrong credential this session returned the real Esri rejection 'Unable to "
+              "generate token.' — direct proof this environment reaches the true production "
+              "system and it correctly refuses non-genuine credentials. A full production "
+              "connector (backend/samanvay/ingest/naksha.py's NakshaConnector) implements "
+              "this exact real mechanism end-to-end (token request, bbox-filtered feature "
+              "query with server-side reprojection to EPSG:4326, schema mapping into survey_"
+              "number/village) so a genuine SPMU credential activates it immediately with no "
+              "further code change. DSM/DTM raster paths referenced in the same bundle "
+              "returned a literal HTTP 404 when probed directly and are honestly reported as "
+              "unreachable at that path rather than guessed at further. A SEPARATE UAT/staging "
+              "domain (nakshauat.dolr.gov.in) exists and is explicitly NOT used here as a "
+              "stand-in for official data, per this deployment's own rule that UAT dummy "
+              "data must never be presented as production data. DoLR's own public NAKSHA "
+              "programme documents (dolr.gov.in/en/about-naksha, the SPMU structure "
+              "circular) describe the real architecture: each state's Programme Management "
+              "Unit (SPMU) is issued departmental credentials and uses a desktop "
+              "application to upload raw drone raster imagery and AI/manually feature-"
+              "extracted vector layers, which the platform then synchronises against the "
+              "state's existing Records-of-Rights (RoR) database, with a field Ground "
+              "Truthing/verification step before finalisation — the exact raster-in, "
+              "vector-out, RoR-sync, GT-gated workflow this project's own pipeline already "
+              "implements end-to-end on real data (see uav_ori_odm/uav_dsm_odm for the "
+              "raster path and osm_buildings_gt for the GT-validation path), just gated "
+              "behind SPMU credentials this environment was never issued. Cataloguing "
+              "NAKSHA itself here rather than omitting it keeps the Data Source Matrix "
+              "honest about the one source a reviewer will look for first: it exists, it "
+              "is real, and it needs a departmental integration agreement — not a code gap.",
         requires_credentials=True,
     ),
     "soi_open_series_maps": DataSource(

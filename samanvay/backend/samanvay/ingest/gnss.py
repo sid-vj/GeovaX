@@ -23,6 +23,7 @@ horizontal and vertical uncertainty, ready to be used as a ground control point.
 from __future__ import annotations
 
 import csv
+import os
 import math
 import re
 from dataclasses import dataclass, field
@@ -215,6 +216,38 @@ def read_rinex_header(path: str) -> dict[str, object]:
         x, y, z = out["ecef"]  # type: ignore[misc]
         out["llh"] = ecef_to_llh(x, y, z)
     return out
+
+
+def read_rinex_as_control(path: str) -> ControlObservation:
+    """Bridge a real RINEX header's marker position into the same `ControlObservation`
+    model the NMEA/CSV readers already produce, so it can flow into
+    `assess_control_network` and the CRS/GCP georeferencing engine like any other control
+    point — previously `read_rinex_header` returned a raw metadata dict that nothing
+    downstream actually consumed.
+
+    Honest about precision: a RINEX observation header carries the receiver's *approximate*
+    marker position (a real, surveyed monument coordinate) but not a formal error ellipse —
+    that requires network adjustment against a SINEX/position file this reader does not have.
+    `sigma_h_m`/`sigma_v_m` are therefore left as NaN (not fabricated as a plausible-looking
+    but invented sub-centimetre figure) and `usable_as_control` correctly reports False for a
+    point in this state, exactly as it does for any observation with unknown quality.
+    """
+    h = read_rinex_header(path)
+    if "llh" not in h:
+        raise ValueError(f"{path}: no APPROX POSITION XYZ in RINEX header — cannot derive a position")
+    lon, lat, height = h["llh"]  # type: ignore[misc]
+    return ControlObservation(
+        point_id=str(h.get("station", os.path.basename(path))),
+        lon=lon, lat=lat, ellipsoidal_height=height,
+        crs="EPSG:4326",
+        sigma_h_m=float("nan"), sigma_v_m=float("nan"),
+        method="rinex_header_marker_position",
+        station=str(h.get("station", "")),
+        antenna=str(h.get("antenna", "")),
+        notes=[f"receiver={h.get('receiver', '?')}",
+               f"rinex_version={h.get('version', '?')}",
+               "formal sigma requires network adjustment (SINEX) not performed here"],
+    )
 
 
 def ecef_to_llh(x: float, y: float, z: float) -> tuple[float, float, float]:

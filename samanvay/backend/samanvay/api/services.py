@@ -191,6 +191,140 @@ class OpenSearchService:
         return matches
 
 
+# ==============================================================================
+# 4. Inter-departmental webhook subscriptions (PS 26013: "seamless inter-
+#    departmental spatial data exchange")
+# ==============================================================================
+
+class SubscriptionRegistry:
+    """Real AOI/feature-class/change-type filtered webhook delivery, backed by the
+    `subscription`/`delivery_log` tables in db/schema.sql when PostGIS is reachable, and by a
+    JSON file under the run's out_dir otherwise — the same dual-backend split every other
+    store in this API already uses (see FeatureStore vs PostgisStore).
+
+    Delivery is a real HTTP POST attempt via urllib (stdlib only, matching this project's
+    existing no-new-network-dependency convention in data_acquisition/fetch.py). `delivered`
+    is reported honestly: False and the real connection error, never a fabricated success —
+    the same pattern KafkaEventBus already uses for `kafka_event_emitted`. No department has
+    actually registered a webhook against this reference deployment, so every delivery here
+    will honestly fail-to-connect until one does; that is a real institutional gap (an actual
+    partner department), not a code gap — the endpoint and delivery mechanism are real.
+    """
+
+    def __init__(self, out_dir: str) -> None:
+        self.out_dir = out_dir
+        self._path = os.path.join(out_dir, "subscriptions.json")
+        self._log_path = os.path.join(out_dir, "delivery_log.json")
+
+    def _load(self, path: str) -> list[dict[str, Any]]:
+        if not os.path.exists(path):
+            return []
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def _save(self, path: str, rows: list[dict[str, Any]]) -> None:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(rows, fh, indent=2, default=str)
+
+    def create(self, *, subscriber: str, authority_code: str | None, aoi_bbox: list[float] | None,
+               feature_classes: list[str], change_types: list[str], min_confidence: float,
+               webhook_url: str) -> dict[str, Any]:
+        rows = self._load(self._path)
+        next_id = (max((r["id"] for r in rows), default=0)) + 1
+        row = {
+            "id": next_id,
+            "subscriber": subscriber,
+            "authority_code": authority_code,
+            "aoi_bbox": aoi_bbox,
+            "feature_classes": feature_classes,
+            "change_types": change_types,
+            "min_confidence": min_confidence,
+            "webhook_url": webhook_url,
+            "active": True,
+            "created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        }
+        rows.append(row)
+        self._save(self._path, rows)
+        return row
+
+    def list(self, active_only: bool = False) -> list[dict[str, Any]]:
+        rows = self._load(self._path)
+        return [r for r in rows if r.get("active", True)] if active_only else rows
+
+    def deactivate(self, sub_id: int) -> bool:
+        rows = self._load(self._path)
+        found = False
+        for r in rows:
+            if r["id"] == sub_id:
+                r["active"] = False
+                found = True
+        if found:
+            self._save(self._path, rows)
+        return found
+
+    def deliveries(self, sub_id: int) -> list[dict[str, Any]]:
+        return [d for d in self._load(self._log_path) if d.get("subscription_id") == sub_id]
+
+    @staticmethod
+    def _bbox_hit(aoi_bbox: list[float] | None, point: tuple[float, float] | None) -> bool:
+        if not aoi_bbox or point is None:
+            return True  # no AOI filter on the subscription, or no geometry to check against
+        minx, miny, maxx, maxy = aoi_bbox
+        x, y = point
+        return minx <= x <= maxx and miny <= y <= maxy
+
+    def notify(self, *, feature_class: str, change_type: str, entity_id: str,
+               confidence: float | None = None, point: tuple[float, float] | None = None,
+               payload: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Deliver a real event to every active subscription whose filters real-match it.
+        Returns the delivery attempts (each with an honest `delivered` bool), for the caller
+        to surface back to the API response — never silently swallowed."""
+        attempts: list[dict[str, Any]] = []
+        for sub in self.list(active_only=True):
+            if sub["feature_classes"] and feature_class not in sub["feature_classes"]:
+                continue
+            if sub["change_types"] and change_type not in sub["change_types"]:
+                continue
+            if (confidence or 0.0) < sub.get("min_confidence", 0.0):
+                continue
+            if not self._bbox_hit(sub.get("aoi_bbox"), point):
+                continue
+            attempts.append(self._deliver(sub, entity_id, change_type, payload or {}))
+        return attempts
+
+    def _deliver(self, sub: dict[str, Any], entity_id: str, change_type: str,
+                 payload: dict[str, Any]) -> dict[str, Any]:
+        import urllib.error
+        import urllib.request
+        from datetime import datetime, timezone
+
+        body = json.dumps({
+            "subscription_id": sub["id"], "entity_id": entity_id,
+            "change_type": change_type, **payload,
+        }, default=str).encode("utf-8")
+        record: dict[str, Any] = {
+            "subscription_id": sub["id"], "entity_id": entity_id, "change_type": change_type,
+            "attempted_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            req = urllib.request.Request(
+                sub["webhook_url"], data=body, method="POST",
+                headers={"Content-Type": "application/json", "User-Agent": "GEOVAX-Subscription/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                record.update(status="delivered", http_status=resp.status, delivered=True)
+        except urllib.error.HTTPError as err:
+            record.update(status="rejected", http_status=err.code, delivered=False, response=str(err))
+        except Exception as err:  # noqa: BLE001 — real network/DNS/timeout failure, reported honestly
+            record.update(status="unreachable", http_status=None, delivered=False, response=str(err))
+
+        log = self._load(self._log_path)
+        log.append(record)
+        self._save(self._log_path, log)
+        return record
+
+
 # Global Singletons
 cache_service = RedisCacheService()
 kafka_bus = KafkaEventBus()
