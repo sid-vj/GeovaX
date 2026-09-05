@@ -35,12 +35,54 @@ function pointInFeatureGeometry(pt: [number, number], geometry: any): boolean {
   return false;
 }
 
+// Real geographic bounds of a GeoJSON geometry (min/max walk over every coordinate) — used to
+// fit the map to the actual extent of real fetched data (a real GCC ward polygon, or the real
+// returned parcels) instead of a fixed per-ward zoom guess that can cut the AOI off.
+function boundsOfGeometry(geometry: any, into?: [number, number, number, number]): [number, number, number, number] {
+  const b: [number, number, number, number] = into || [Infinity, Infinity, -Infinity, -Infinity];
+  const walk = (c: any): void => {
+    if (!Array.isArray(c)) return;
+    if (typeof c[0] === 'number' && typeof c[1] === 'number') {
+      if (c[0] < b[0]) b[0] = c[0];
+      if (c[1] < b[1]) b[1] = c[1];
+      if (c[0] > b[2]) b[2] = c[0];
+      if (c[1] > b[3]) b[3] = c[1];
+    } else {
+      c.forEach(walk);
+    }
+  };
+  if (geometry?.coordinates) walk(geometry.coordinates);
+  return b;
+}
+
+// Shared button styling for the 3D/2D/MAP/SAT map-control cluster — one visual language for
+// both pairs, active state in the app's existing gold/amber accent (already used elsewhere for
+// utility lines and confidence-grade coloring) on the same dark navy chrome the control's
+// container already uses, so it reads as native GeovaX rather than a bolted-on widget.
+function mapControlBtnStyle(active: boolean): React.CSSProperties {
+  return {
+    padding: '6px 14px',
+    border: 'none',
+    borderRadius: '4px',
+    background: active ? '#ffb700' : 'transparent',
+    color: active ? '#0d1d30' : '#a9d9e8',
+    fontWeight: 700,
+    fontSize: '0.75rem',
+    letterSpacing: '0.02em',
+    cursor: 'pointer',
+    transition: 'background 0.15s ease, color 0.15s ease',
+  };
+}
+
 export default function WebGISPage() {
   const [currentUser, setCurrentUser] = useState<UserProfile>(PRESET_USERS[1]); // Tahsildar (Vandalur – Guindy Corridor)
   const [selectedWard, setSelectedWard] = useState<WardLocation>(AVAILABLE_WARDS.find(w => w.id === 'Anna Salai') || AVAILABLE_WARDS[0]); // Default Anna Salai
   const [selectedStreet, setSelectedStreet] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
-  const [baseMapType, setBaseMapType] = useState<'osiris-sat' | 'osiris-dark' | 'osiris-streets'>('osiris-sat');
+  // Two real basemaps only (MAP/SAT control) — 'osiris-streets' (previously a third "Voyager"
+  // option) is retired as a selectable basemap; its real, working source/layer is left defined
+  // below but unused rather than deleted.
+  const [baseMapType, setBaseMapType] = useState<'osiris-sat' | 'osiris-dark'>('osiris-sat');
   const [parcelOpacity, setParcelOpacity] = useState<number>(0.35);
   const [showUtilities, setShowUtilities] = useState<boolean>(true);
   const [showEncroachment, setShowEncroachment] = useState<boolean>(true);
@@ -243,7 +285,7 @@ export default function WebGISPage() {
           const localHits = (localData.suggestions || []).map((s: any) => ({
             ...s,
             type: 'cadastre',
-            icon: '📐',
+            icon: '',
             badge: `${s.parcels_count} Survey Plots`,
           }));
           combined.push(...localHits);
@@ -259,13 +301,21 @@ export default function WebGISPage() {
             const subtitle = [p.street, p.district, p.city, p.state].filter(Boolean).join(', ');
             return {
               title: name,
-              locality: p.district || p.city || 'Chennai',
-              taluk: p.county || 'Tamil Nadu',
+              // No "Chennai"/"Tamil Nadu" fallback here: a city-level real result (e.g.
+              // searching "Mumbai" itself) carries no district/city/county sub-fields at all,
+              // and defaulting to Chennai/TN previously made handleSelectStreetSuggestion's
+              // ward-matching logic wrongly match an unrelated curated Chennai ward whose
+              // *name* happened to contain the literal word "Chennai" (e.g. "...Chennai
+              // Airport"). Leaving these real-or-nothing lets that matching correctly fail
+              // and fall through to a synthetic ward built from this result's own real
+              // centroid, which is what should happen for a genuinely non-Chennai place.
+              locality: p.district || p.city || '',
+              taluk: p.county || p.state || '',
               full_address: subtitle || name,
               centroid: f.geometry?.coordinates || [80.14, 12.95],
               zoom: 16.5,
               type: 'gmap_poi',
-              icon: p.osm_value === 'railway' ? '🚉' : (p.osm_value === 'hospital' ? '🏥' : (p.osm_value === 'school' ? '🏫' : '📍')),
+              icon: p.osm_value === 'railway' ? '' : (p.osm_value === 'hospital' ? '' : (p.osm_value === 'school' ? '' : '')),
               badge: p.osm_value || 'Landmark',
             };
           });
@@ -374,10 +424,17 @@ export default function WebGISPage() {
     setSearchQuery(item.title);
     setShowSuggestions(false);
 
-    const matchedWard = AVAILABLE_WARDS.find((w) =>
-      w.id.toLowerCase() === (item.locality || '').toLowerCase() ||
-      w.name.toLowerCase().includes((item.locality || '').toLowerCase())
-    );
+    // Guard against an empty locality: String.prototype.includes('') is always true, which
+    // would otherwise match the *first* curated ward unconditionally for any real place the
+    // geocoder returns with no district/city field of its own (a real risk now that locality
+    // has no "Chennai" fallback — see the geocoder mapping above).
+    const rawLocality = (item.locality || '').trim();
+    const matchedWard = rawLocality
+      ? AVAILABLE_WARDS.find((w) =>
+          w.id.toLowerCase() === rawLocality.toLowerCase() ||
+          w.name.toLowerCase().includes(rawLocality.toLowerCase())
+        )
+      : undefined;
 
     if (matchedWard) {
       setSelectedWard(matchedWard);
@@ -530,7 +587,7 @@ export default function WebGISPage() {
     if (user.wardScope && user.wardScope.length > 0 && ward.id !== 'all' && isKnownCatalogueWard) {
       const hasPermission = user.wardScope.some((w) => w.toLowerCase() === ward.id.toLowerCase());
       if (!hasPermission) {
-        setAccessAlert(`⚠️ ABAC Notice: ${user.name} is not authorized for ${ward.name}. Read-only inspection.`);
+        setAccessAlert(`ABAC Notice: ${user.name} is not authorized for ${ward.name}. Read-only inspection.`);
       } else {
         setAccessAlert(null);
       }
@@ -538,13 +595,10 @@ export default function WebGISPage() {
       setAccessAlert(null);
     }
 
-    map.flyTo({
-      center: ward.center,
-      zoom: ward.zoom,
-      speed: 1.3,
-      curve: 1.4,
-      essential: true,
-    });
+    // Quick preview pan only — no zoom guess here, so the view never jumps to a fixed zoom
+    // that could cut off the real AOI before its actual bounds are known. The real, accurate
+    // framing happens below via fitBounds once the real ward polygon/parcels have arrived.
+    map.easeTo({ center: ward.center, duration: 400, essential: true });
 
     try {
       // Real bbox math (not a ward-name string match) so this works for any coordinate —
@@ -588,6 +642,7 @@ export default function WebGISPage() {
             properties: { name: `Approximate AOI Extent: ${ward.name} (no real ward boundary found here)` },
           };
           setRealWardInfo(null);
+          let hit: any = null;
 
           // Real GCC ward boundary, when the selected point actually falls inside one —
           // replaces the fabricated padded rectangle above with the government's own real
@@ -600,7 +655,7 @@ export default function WebGISPage() {
               );
               if (myToken === updateMapDataToken.current && wardsRes.ok) {
                 const wardsJson = await wardsRes.json();
-                const hit = (wardsJson.features || []).find((f: any) => pointInFeatureGeometry([cx, cy], f.geometry));
+                hit = (wardsJson.features || []).find((f: any) => pointInFeatureGeometry([cx, cy], f.geometry));
                 if (hit) {
                   aoiGeojson = {
                     type: 'Feature',
@@ -620,6 +675,25 @@ export default function WebGISPage() {
           }
           if (myToken !== updateMapDataToken.current) return;
           map.getSource('aoi-boundary').setData(aoiGeojson);
+
+          // Real fitBounds — frames the map to the actual extent of real data rather than a
+          // fixed per-ward zoom that can crop the AOI. Prefers the real GCC ward polygon's own
+          // bounds (most authoritative); falls back to the real returned parcels' combined
+          // bounds; falls back to the padded query bbox only when neither exists (e.g. a
+          // searched location with zero real coverage) so the map still frames *something*
+          // sensible rather than staying wherever the previous selection left it.
+          const fitBox: [number, number, number, number] = hit
+            ? boundsOfGeometry(hit.geometry)
+            : features.length > 0
+            ? features.reduce((acc: [number, number, number, number], f: any) => boundsOfGeometry(f.geometry, acc),
+                [Infinity, Infinity, -Infinity, -Infinity] as [number, number, number, number])
+            : [cx - pad, cy - pad, cx + pad, cy + pad];
+          if (Number.isFinite(fitBox[0]) && Number.isFinite(fitBox[2])) {
+            map.fitBounds(
+              [[fitBox[0], fitBox[1]], [fitBox[2], fitBox[3]]],
+              { padding: 60, maxZoom: 17, duration: 900, essential: true }
+            );
+          }
 
           // Real harmonized building count for this AOI. numberMatched reflects the full
           // real match count server-side regardless of `limit`, so limit=1 is enough.
@@ -709,9 +783,13 @@ export default function WebGISPage() {
     }
   };
 
-  // Initialize High-Resolution Map with Overzooming (No "Map Data Not Available" errors)
+  // Initialize High-Resolution Map with Overzooming (No "Map Data Not Available" errors).
+  // Initialized exactly once, independent of viewMode — the 3D/2D toggle below tilts this
+  // same real MapLibre instance's camera (pitch/bearing) instead of tearing it down and
+  // rebuilding it, which is what previously discarded every visible layer, the selected
+  // ward's data and the current camera position on every 2D/3D switch.
   useEffect(() => {
-    if (viewMode === '2d' && typeof window !== 'undefined' && mapContainerRef.current) {
+    if (typeof window !== 'undefined' && mapContainerRef.current) {
       const maplibre = (window as any).maplibregl;
       if (!maplibre) {
         const script = document.createElement('script');
@@ -722,11 +800,6 @@ export default function WebGISPage() {
         initMap(maplibre);
       }
     }
-    // Without this, switching to the 3D toggle unmounted the container div but never
-    // destroyed the MapLibre instance/canvas inside it, so the honest "not available" 3D
-    // placeholder rendered in the DOM while the old 2D satellite canvas stayed visually on
-    // top of it — the toggle looked like it did nothing. Tearing the map down here so a
-    // later switch back to 2D also gets a clean re-init instead of a stale instance.
     return () => {
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
@@ -734,6 +807,25 @@ export default function WebGISPage() {
         if (typeof window !== 'undefined') (window as any).__geovaxMap = null;
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Real 3D/2D camera control: MapLibre's own perspective camera (pitch + bearing) tilted over
+  // the SAME map instance, center, zoom and data layers — not a fake 3D mode. No per-building
+  // extrusion is added here: the harmonised output carries no real per-building height field
+  // (only an AOI-wide mean structure height), and fabricating uniform building heights just to
+  // look three-dimensional would be exactly the kind of invented data this platform refuses to
+  // show elsewhere. Real visual depth still comes from the perspective-projected basemap
+  // imagery/parcels/buildings footprints themselves once tilted.
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    map.easeTo({
+      pitch: viewMode === '3d' ? 55 : 0,
+      bearing: viewMode === '3d' ? -17 : 0,
+      duration: 700,
+      essential: true,
+    });
   }, [viewMode]);
 
   const initMap = (maplibregl: any) => {
@@ -835,10 +927,14 @@ export default function WebGISPage() {
             layout: { visibility: baseMapType === 'osiris-dark' ? 'visible' : 'none' },
           },
           {
+            // Real, working Esri street basemap — retired as a selectable MAP/SAT basemap
+            // option (now exactly two: osiris-sat, osiris-dark) but its layer is left defined
+            // since the existing "Street & Place Labels" sidebar checkbox (showDroneLayer)
+            // still controls this exact layer's visibility, unchanged.
             id: 'osiris-streets-layer',
             type: 'raster',
             source: 'osiris-streets',
-            layout: { visibility: baseMapType === 'osiris-streets' ? 'visible' : 'none' },
+            layout: { visibility: 'none' },
           },
           {
             id: 'osiris-labels-layer',
@@ -991,13 +1087,25 @@ export default function WebGISPage() {
     map.on('click', 'utilities-lines', (e: any) => {
       if (e.features && e.features[0]) {
         const p = e.features[0].properties;
-        alert(`⚡ Utility Telemetry:\nLayer: ${p.layer_name}\nAuthority: ${p.authority}\nType: ${p.utility_type}\nDepth: ${p.depth_m}m\nStatus: ${p.status}`);
+        alert(`Utility Telemetry:\nLayer: ${p.layer_name}\nAuthority: ${p.authority}\nType: ${p.utility_type}\nDepth: ${p.depth_m}m\nStatus: ${p.status}`);
       }
     });
 
-    map.addControl(new maplibregl.NavigationControl(), 'top-right');
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
     mapInstanceRef.current = map;
     if (typeof window !== 'undefined') (window as any).__geovaxMap = map;
+
+    // Keep the 3D/2D control's active state truthful against the REAL map camera, not just
+    // whichever button was last clicked — a manual drag-to-tilt (MapLibre's own real
+    // pitchWithRotate interaction, already enabled by default) is just as valid a way to end
+    // up in a 3D view as clicking the button, and the control must reflect that either way.
+    map.on('pitchend', () => {
+      const p = map.getPitch();
+      setViewMode((prev) => {
+        const real = p > 2 ? '3d' : '2d';
+        return prev === real ? prev : real;
+      });
+    });
 
     map.on('load', () => {
       // Data population is left to the [selectedWard, currentUser, authReady] effect,
@@ -1007,24 +1115,35 @@ export default function WebGISPage() {
     });
   };
 
-  // Switch Base Map Layer
+  // MAP / SAT basemap switch — baseMapType is now the sole authority for these two real
+  // raster layers (previously osiris-sat-layer's visibility was driven only by the
+  // "GeoSat Base Layer" sidebar checkbox and ignored baseMapType entirely, so the old
+  // satellite/dark/Voyager switcher buttons didn't reliably control what was actually shown).
   useEffect(() => {
     if (mapInstanceRef.current && mapInstanceRef.current.isStyleLoaded()) {
       const map = mapInstanceRef.current;
       if (map.getLayer('osiris-sat-layer')) {
-        map.setLayoutProperty('osiris-sat-layer', 'visibility', showGeoSatLayer ? 'visible' : 'none');
-      }
-      if (map.getLayer('osiris-labels-layer')) {
-        map.setLayoutProperty('osiris-labels-layer', 'visibility', showGeoSatLayer || showDroneLayer ? 'visible' : 'none');
+        map.setLayoutProperty('osiris-sat-layer', 'visibility', baseMapType === 'osiris-sat' ? 'visible' : 'none');
       }
       if (map.getLayer('osiris-dark-layer')) {
         map.setLayoutProperty('osiris-dark-layer', 'visibility', baseMapType === 'osiris-dark' ? 'visible' : 'none');
+      }
+    }
+  }, [baseMapType]);
+
+  // Existing sidebar overlay toggles (unchanged): real Esri place-name labels and the real
+  // street basemap layer, independent of the MAP/SAT basemap switch above.
+  useEffect(() => {
+    if (mapInstanceRef.current && mapInstanceRef.current.isStyleLoaded()) {
+      const map = mapInstanceRef.current;
+      if (map.getLayer('osiris-labels-layer')) {
+        map.setLayoutProperty('osiris-labels-layer', 'visibility', showGeoSatLayer || showDroneLayer ? 'visible' : 'none');
       }
       if (map.getLayer('osiris-streets-layer')) {
         map.setLayoutProperty('osiris-streets-layer', 'visibility', showDroneLayer ? 'visible' : 'none');
       }
     }
-  }, [baseMapType, showGeoSatLayer, showDroneLayer]);
+  }, [showGeoSatLayer, showDroneLayer]);
 
   // Update Parcel Opacity
   useEffect(() => {
@@ -1113,11 +1232,11 @@ export default function WebGISPage() {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <div style={{ fontWeight: 800, fontSize: '1.15rem', letterSpacing: '0.6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span>🏛️</span>
+            <span></span>
             <span>GOVERNMENT OF INDIA · GEOVAX</span>
           </div>
           <span style={{ fontSize: '0.72rem', background: '#00507a', padding: '3px 10px', borderRadius: '4px', border: '1px solid #00ffff', fontWeight: 700, color: '#00ffff' }}>
-            👁️ NIC GeoAI Engine: Active
+            NIC GeoAI Engine: Active
           </span>
         </div>
 
@@ -1177,7 +1296,7 @@ export default function WebGISPage() {
                 cursor: 'pointer',
               }}
             >
-              📍 Zones
+              Zones
             </button>
             <button
               onClick={() => setSidebarTab('revenue')}
@@ -1193,7 +1312,7 @@ export default function WebGISPage() {
                 cursor: 'pointer',
               }}
             >
-              ⚖️ Adjudication &amp; AI Tools
+              Adjudication &amp; AI Tools
             </button>
           </div>
 
@@ -1244,7 +1363,7 @@ export default function WebGISPage() {
               {selectedWard.majorStreets && (
                 <div style={{ background: '#f8fafd', border: '1.5px solid #005ea2', borderRadius: '6px', padding: '10px' }}>
                   <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span>🛣️</span>
+                    <span></span>
                     <span>Roads in {selectedWard.id}</span>
                   </div>
                   <select
@@ -1268,10 +1387,10 @@ export default function WebGISPage() {
                       cursor: 'pointer',
                     }}
                   >
-                    <option value="all">🔍 All Streets in {selectedWard.id}</option>
+                    <option value="all">All Streets in {selectedWard.id}</option>
                     {selectedWard.majorStreets.map((st, i) => (
                       <option key={i} value={st}>
-                        📍 {st}
+                        {st}
                       </option>
                     ))}
                   </select>
@@ -1286,7 +1405,7 @@ export default function WebGISPage() {
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                   <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase' }}>
-                    ⚖️ Conflict Queue ({selectedWard.id})
+                    Conflict Queue ({selectedWard.id})
                   </span>
                   <span style={{ fontSize: '0.7rem', color: '#565c65' }}>
                     {adjudicationTotal ?? adjudicationQueue.length} Cases{adjudicationTotal !== null && adjudicationTotal > adjudicationQueue.length ? ` (${adjudicationQueue.length} shown)` : ''}
@@ -1295,7 +1414,7 @@ export default function WebGISPage() {
 
                 {currentUser.role === 'citizen' ? (
                   <div style={{ background: '#f8dfe2', padding: '6px', fontSize: '0.75rem', color: '#9e1c23', border: '1px solid #e8a9af', borderRadius: '4px' }}>
-                    🚫 Citizen role has read-only access.
+                    Citizen role has read-only access.
                   </div>
                 ) : adjudicationQueue.length === 0 ? (
                   <div style={{ fontSize: '0.75rem', color: '#565c65', padding: '8px', background: '#f8f9fa', borderRadius: '4px' }}>
@@ -1334,7 +1453,7 @@ export default function WebGISPage() {
                             cursor: 'pointer',
                           }}
                         >
-                          {isResolving ? 'Emitting Kafka...' : '✓ Approve Statutory Boundary'}
+                          {isResolving ? 'Emitting Kafka...' : 'Approve Statutory Boundary'}
                         </button>
                       </div>
                     ))}
@@ -1345,7 +1464,7 @@ export default function WebGISPage() {
               {/* OSIRIS AI SAM Extractor */}
               <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '6px', padding: '10px' }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  🧠 NIC GeoAI: Rooftop Extraction
+                  NIC GeoAI: Rooftop Extraction
                 </div>
                 <button
                   onClick={handleTriggerGeoAI}
@@ -1375,14 +1494,14 @@ export default function WebGISPage() {
           {/* Real-time Kafka Stream at bottom */}
           <div style={{ marginTop: 'auto', padding: '0.6rem 0.8rem', background: '#f4f6f9', borderTop: '1px solid #dfe1e2', maxHeight: '90px', overflowY: 'auto' }}>
             <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#565c65', textTransform: 'uppercase', marginBottom: '2px' }}>
-              ⚡ Kafka Audit Stream
+              Kafka Audit Stream
             </div>
             {kafkaEvents.length === 0 ? (
               <div style={{ fontSize: '0.68rem', color: '#565c65' }}>Listening on geovax.events.adjudication...</div>
             ) : (
               kafkaEvents.map((ev, i) => (
                 <div key={i} style={{ fontSize: '0.66rem', color: '#1b1b1b' }}>
-                  <strong>[{ev.time}]</strong> {ev.actor} ➔ {ev.decision}
+                <strong>[{ev.time}]</strong> {ev.actor} {ev.decision}
                 </div>
               ))
             )}
@@ -1416,7 +1535,7 @@ export default function WebGISPage() {
               padding: '8px 14px',
               gap: '10px',
             }}>
-              <span style={{ fontSize: '1.2rem', color: '#005ea2' }}>🔍</span>
+              <span style={{ fontSize: '1.2rem', color: '#005ea2' }}></span>
               <input
                 ref={searchInputRef}
                 type="text"
@@ -1433,13 +1552,13 @@ export default function WebGISPage() {
                   fontWeight: 600,
                 }}
               />
-              {isSearching && <span style={{ fontSize: '0.8rem', color: '#005ea2' }}>⏳</span>}
+              {isSearching && <span style={{ fontSize: '0.8rem', color: '#005ea2' }}></span>}
               {searchQuery && (
                 <button
                   onClick={() => { setSearchQuery(''); setSuggestions([]); setShowSuggestions(false); }}
                   style={{ background: 'none', border: 'none', color: '#565c65', cursor: 'pointer', fontSize: '1.1rem', padding: '0 4px' }}
                 >
-                  ✕
+                  
                 </button>
               )}
             </div>
@@ -1464,7 +1583,7 @@ export default function WebGISPage() {
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  📍 {chip}
+                  {chip}
                 </button>
               ))}
             </div>
@@ -1499,7 +1618,7 @@ export default function WebGISPage() {
                     onMouseEnter={(e) => (e.currentTarget.style.background = '#f4f6f9')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = '#ffffff')}
                   >
-                    <span style={{ fontSize: '1.3rem' }}>{item.icon || '📍'}</span>
+                    <span style={{ fontSize: '1.3rem' }}>{item.icon || ''}</span>
                     <div style={{ flexGrow: 1 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#1a4480' }}>
@@ -1526,80 +1645,65 @@ export default function WebGISPage() {
             )}
           </div>
 
-          {/* OSIRIS AI Multi-Engine Switcher */}
-          <div style={{
-            position: 'absolute',
-            bottom: 24,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 20,
-            background: '#0d1d30',
-            borderRadius: '6px',
-            boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
-            border: '1px solid #2d5a8c',
-            display: 'flex',
-            padding: '3px',
-            gap: '3px',
-          }}>
+          {/* Map view/basemap control — two independent pairs: [3D|2D] real camera pitch on
+              the live map, and [MAP|SAT] real basemap switch. Both reflect actual map state:
+              viewMode is kept in sync with the map's real pitch (see the 'pitchend' listener
+              in initMap), and baseMapType directly drives which real raster layer is visible
+              (see the "MAP / SAT basemap switch" effect) — neither button can show selected
+              while the map disagrees. */}
+          <div
+            role="group"
+            aria-label="Map view and basemap controls"
+            style={{
+              position: 'absolute',
+              bottom: 24,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 20,
+              background: '#0d1d30',
+              borderRadius: '6px',
+              boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+              border: '1px solid #2d5a8c',
+              display: 'flex',
+              alignItems: 'center',
+              padding: '3px',
+              gap: '2px',
+            }}
+          >
             <button
-              onClick={() => setBaseMapType('osiris-sat')}
-              style={{
-                padding: '6px 11px',
-                border: 'none',
-                borderRadius: '4px',
-                background: baseMapType === 'osiris-sat' ? '#005ea2' : 'transparent',
-                color: '#ffffff',
-                fontWeight: 700,
-                fontSize: '0.78rem',
-                cursor: 'pointer',
-              }}
+              onClick={() => setViewMode('3d')}
+              aria-pressed={viewMode === '3d'}
+              title="Tilt the real map into a 3D perspective camera"
+              style={mapControlBtnStyle(viewMode === '3d')}
             >
-              🛰️ Bhuvan Sat
+              3D
             </button>
+            <button
+              onClick={() => setViewMode('2d')}
+              aria-pressed={viewMode === '2d'}
+              title="Return to a top-down 2D map"
+              style={mapControlBtnStyle(viewMode === '2d')}
+            >
+              2D
+            </button>
+
+            <div style={{ width: '1px', alignSelf: 'stretch', background: '#2d5a8c', margin: '0 5px' }} />
+
             <button
               onClick={() => setBaseMapType('osiris-dark')}
-              style={{
-                padding: '6px 11px',
-                border: 'none',
-                borderRadius: '4px',
-                background: baseMapType === 'osiris-dark' ? '#005ea2' : 'transparent',
-                color: '#ffffff',
-                fontWeight: 700,
-                fontSize: '0.78rem',
-                cursor: 'pointer',
-              }}
+              aria-pressed={baseMapType === 'osiris-dark'}
+              title="Reference basemap"
+              style={mapControlBtnStyle(baseMapType === 'osiris-dark')}
             >
-              🌑 Bhuvan Dark
+              MAP
             </button>
             <button
-              onClick={() => setBaseMapType('osiris-streets')}
-              style={{
-                padding: '6px 11px',
-                border: 'none',
-                borderRadius: '4px',
-                background: baseMapType === 'osiris-streets' ? '#005ea2' : 'transparent',
-                color: '#ffffff',
-                fontWeight: 700,
-                fontSize: '0.78rem',
-                cursor: 'pointer',
-              }}
+              onClick={() => setBaseMapType('osiris-sat')}
+              aria-pressed={baseMapType === 'osiris-sat'}
+              title="Real satellite/aerial imagery basemap (Esri World Imagery)"
+              style={mapControlBtnStyle(baseMapType === 'osiris-sat')}
             >
-              🗺️ Voyager
-            </button>
-            <button
-              onClick={() => setViewMode(viewMode === '2d' ? '3d' : '2d')}
-              style={{
-                padding: '6px 11px',
-                border: 'none',
-                borderRadius: '4px',
-                background: viewMode === '3d' ? '#00a91c' : '#081422',
-                color: '#ffffff',
-                fontWeight: 700,
-                fontSize: '0.78rem',
-                cursor: 'pointer',
-              }}
-            >
-              🌐 {viewMode === '2d' ? '3D Mesh' : '2D Plane'}
+              SAT
             </button>
           </div>
 
@@ -1655,7 +1759,7 @@ export default function WebGISPage() {
             maxWidth: '280px'
           }}>
             <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#1a4480', textTransform: 'uppercase' }}>
-              🧠 AI Active Learning
+              AI Active Learning
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginTop: '4px' }}>
               <span style={{ color: '#00a91c', fontWeight: 700 }}>Auto-Integrated</span>
@@ -1680,7 +1784,7 @@ export default function WebGISPage() {
             boxShadow: '0 4px 15px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', gap: '8px'
           }}>
             <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#1a4480', textTransform: 'uppercase' }}>
-              🗺️ Bhuvan Map Layers
+              Bhuvan Map Layers
             </div>
             
             {/* Map Theme Toggle */}
@@ -1727,40 +1831,18 @@ export default function WebGISPage() {
             gap: '8px',
             boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
           }}>
-            <span>👁️ <strong>{cursorCoords.lat}° N, {cursorCoords.lng}° E</strong></span>
+            <span><strong>{cursorCoords.lat}° N, {cursorCoords.lng}° E</strong></span>
             <span>·</span>
             <span>SoI Geodetic EPSG:32644</span>
           </div>
 
-          {/* 2D View Container */}
-          {viewMode === '2d' ? (
-            <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
-          ) : (
-            /* Honest unavailable state: no 3D engine actually runs here. Real per-building
-               height data does not exist in the harmonised output (only an AOI-wide mean
-               structure height), and no DSM/DEM raster has been fetched for this AOI — see
-               the Data Source Matrix in the Dossier tab — so there is nothing real to render
-               in 3D yet. This used to claim it was rendering satellite-draped DEM/LOD1
-               extrusions while showing a static screen; that claim has been removed. */
-            <div style={{
-              width: '100%',
-              height: '100%',
-              background: '#0b1622',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'center',
-              alignItems: 'center',
-              color: '#ffffff',
-            }}>
-              <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>🌐 3D Terrain View</div>
-              <div style={{ maxWidth: '520px', textAlign: 'center', fontSize: '0.95rem', color: '#a9d9e8', lineHeight: '1.6' }}>
-                Not available for {selectedWard.name}. 3D rendering needs a real DSM/DEM raster and per-building
-                heights, neither of which has been fetched for this AOI yet (the harmonised output only carries
-                an AOI-wide mean structure height, not per-building geometry). See the Data Source Matrix in the
-                Dossier tab for the real, credential-gated DSM sources identified for this gap.
-              </div>
-            </div>
-          )}
+          {/* Single real map container, always mounted — the 3D/2D control tilts this same
+              MapLibre instance's camera (pitch/bearing) rather than swapping in a placeholder,
+              so the current center, zoom, selected AOI and every visible layer survive a
+              2D/3D switch untouched. No per-building extrusion is added in 3D: the harmonised
+              output has no real per-building height field, and a uniform fabricated height
+              would be exactly the kind of invented data this platform refuses elsewhere. */}
+          <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
         </main>
 
         {/* ========================================================================= */}
@@ -1836,7 +1918,7 @@ export default function WebGISPage() {
                   cursor: 'pointer',
                 }}
               >
-                ⚖️ Court Cases {courtDataSource === 'credential_required' ? '(auth required)' : `(${wardCourtCases.length})`}
+                Court Cases {courtDataSource === 'credential_required' ? '(auth required)' : `(${wardCourtCases.length})`}
               </button>
               <button
                 onClick={() => setRightPanelTab('ward')}
@@ -1851,7 +1933,7 @@ export default function WebGISPage() {
                   cursor: 'pointer',
                 }}
               >
-                📊 Dossier ({wardStats.totalParcels})
+                Dossier ({wardStats.totalParcels})
               </button>
               <button
                 onClick={() => setRightPanelTab('parcel')}
@@ -1866,7 +1948,7 @@ export default function WebGISPage() {
                   cursor: 'pointer',
                 }}
               >
-                🔎 Telemetry
+                Telemetry
               </button>
             </div>
           </div>
@@ -1960,7 +2042,7 @@ export default function WebGISPage() {
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div style={{ fontWeight: 700, color: '#d83933', fontSize: '0.85rem' }}>
-                          ⚖️ CNR {c.cnr}
+                          CNR {c.cnr}
                         </div>
                         <span style={{ fontSize: '0.68rem', color: '#1a4480', background: '#e1f3f8', padding: '2px 6px', fontWeight: 700, borderRadius: '3px' }}>
                           Survey {c.survey_number}
@@ -1976,7 +2058,7 @@ export default function WebGISPage() {
                       </div>
 
                       <div style={{ fontSize: '0.72rem', color: '#565c65', marginTop: '2px' }}>
-                        🏛️ {c.court_name} · 📍 <strong>{c.village_name || selectedWard.id}</strong>
+                        {c.court_name} · <strong>{c.village_name || selectedWard.id}</strong>
                       </div>
 
                       <div style={{ fontSize: '0.72rem', color: '#565c65', marginTop: '2px' }}>
@@ -1992,10 +2074,10 @@ export default function WebGISPage() {
                           fontWeight: 700,
                           borderRadius: '3px',
                         }}>
-                          🚨 {c.status}
+                          {c.status}
                         </span>
                         <span style={{ color: '#005ea2', fontSize: '0.7rem', fontWeight: 700 }}>
-                          View Case Dossier ➔
+                          View Case Dossier
                         </span>
                       </div>
                     </div>
@@ -2099,7 +2181,7 @@ export default function WebGISPage() {
               {/* Data quality — real per-parcel confidence grades, aggregated client-side */}
               <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  📐 Data Quality — Confidence Distribution
+                  Data Quality — Confidence Distribution
                 </div>
                 {wardStats.totalParcels === 0 && wardOutsidePipelineAoi ? (
                   <div style={{ fontSize: '0.75rem', color: '#565c65' }}>Not applicable — no harmonised parcels exist for {selectedWard.name} (outside pipeline AOI).</div>
@@ -2124,7 +2206,7 @@ export default function WebGISPage() {
                   own contributing_datasets/n_sources fields (pipeline's resolve stage) */}
               <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  🗂️ Source Datasets & Provenance
+                  Source Datasets & Provenance
                 </div>
                 {Object.keys(sourceContribution).length === 0 ? (
                   <div style={{ fontSize: '0.75rem', color: '#565c65' }}>No parcels loaded for this jurisdiction yet.</div>
@@ -2163,7 +2245,7 @@ export default function WebGISPage() {
               {/* Adjudication queue — real, ward-scoped fetch (fetchAdjudication) */}
               <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  ⚖️ Adjudication Queue (This Jurisdiction)
+                  Adjudication Queue (This Jurisdiction)
                 </div>
                 <div style={{ fontSize: '0.75rem' }}>
                   <strong>{adjudicationTotal ?? adjudicationQueue.length}</strong> case{(adjudicationTotal ?? adjudicationQueue.length) === 1 ? '' : 's'} awaiting human review in {selectedWard.name}
@@ -2175,7 +2257,7 @@ export default function WebGISPage() {
               {/* Utility networks — real CMWSSB water transmission segments, bbox-scoped */}
               <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  🚰 Utility Networks (This Jurisdiction)
+                  Utility Networks (This Jurisdiction)
                 </div>
                 {wardUtilities.length === 0 ? (
                   <div style={{ fontSize: '0.72rem', color: '#565c65' }}>
@@ -2206,7 +2288,7 @@ export default function WebGISPage() {
               {geoaiStatus && (
                 <div style={{ background: '#f8f9fa', border: '1px solid #dfe1e2', borderRadius: '4px', padding: '10px' }}>
                   <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                    🛰️ AI Feature Extraction — Last Run
+                    AI Feature Extraction — Last Run
                   </div>
                   <div style={{ fontSize: '0.72rem', color: '#1b1b1b' }}>{geoaiStatus}</div>
                   {geoaiExtractedCount !== null && geoaiExtractedCount > 0 && (
@@ -2221,7 +2303,7 @@ export default function WebGISPage() {
                   whole AOI, not per-ward, so labeled accordingly and does not vary by selection */}
               <div style={{ border: '1px solid #1a4480', borderRadius: '4px' }}>
                 <div style={{ background: '#1a4480', color: '#fff', padding: '6px 8px', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase' }}>
-                  🧬 AOI-Wide Pipeline Intelligence <span style={{ fontWeight: 400, opacity: 0.85 }}>(whole-AOI run, not per-ward)</span>
+                  AOI-Wide Pipeline Intelligence <span style={{ fontWeight: 400, opacity: 0.85 }}>(whole-AOI run, not per-ward)</span>
                 </div>
                 {!runMetrics ? (
                   <div style={{ padding: '10px', fontSize: '0.75rem', color: '#565c65' }}>/api/run has not returned yet.</div>
@@ -2311,7 +2393,7 @@ export default function WebGISPage() {
                   and not-yet-fetched sources are listed explicitly, never silently omitted. */}
               <div style={{ border: '1px solid #1a4480', borderRadius: '4px' }}>
                 <div style={{ background: '#1a4480', color: '#fff', padding: '6px 8px', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase' }}>
-                  🗺️ Data Source Matrix <span style={{ fontWeight: 400, opacity: 0.85 }}>({fullCatalogue.length} real sources researched)</span>
+                  Data Source Matrix <span style={{ fontWeight: 400, opacity: 0.85 }}>({fullCatalogue.length} real sources researched)</span>
                 </div>
                 {fullCatalogue.length === 0 ? (
                   <div style={{ padding: '10px', fontSize: '0.75rem', color: '#565c65' }}>/api/provenance has not returned yet.</div>
@@ -2340,7 +2422,7 @@ export default function WebGISPage() {
               {/* AI Active Learning Dashboard */}
               <div style={{ background: '#f8f9fa', border: '1px solid #1a4480', borderRadius: '4px', padding: '10px' }}>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  🧠 AI Active Learning Engine
+                  AI Active Learning Engine
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <div style={{ flex: 1 }}>
@@ -2360,7 +2442,7 @@ export default function WebGISPage() {
 
               <div>
                 <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1a4480', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  📋 Surveyed Parcels in {selectedWard.id} ({wardParcels.length})
+                  Surveyed Parcels in {selectedWard.id} ({wardParcels.length})
                 </div>
                 <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #dfe1e2', borderRadius: '4px', background: '#f4f6f9' }}>
                   {wardParcels.map((p, idx) => (
@@ -2415,7 +2497,7 @@ export default function WebGISPage() {
                       previously a near-empty panel until a parcel is clicked. */}
                   <div style={{ border: '1px solid #1a4480', borderRadius: '4px' }}>
                     <div style={{ background: '#1a4480', color: '#fff', padding: '6px 8px', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase' }}>
-                      📡 Pipeline Processing Telemetry
+                      Pipeline Processing Telemetry
                     </div>
                     {!runMetrics ? (
                       <div style={{ padding: '10px', fontSize: '0.75rem', color: '#565c65' }}>Loading /api/run…</div>
@@ -2463,7 +2545,7 @@ export default function WebGISPage() {
                     </div>
                   ) : (
                     <div style={{ padding: '16px', textAlign: 'center', color: '#565c65', fontSize: '0.85rem' }}>
-                      👉 Click any parcel on the map or from the Ward list for its own live per-parcel telemetry below.
+                      Click any parcel on the map or from the Ward list for its own live per-parcel telemetry below.
                     </div>
                   )}
                 </>
@@ -2490,7 +2572,7 @@ export default function WebGISPage() {
                           cursor: 'pointer',
                         }}
                       >
-                        {copiedUlpin ? '✓ Copied' : '📋 Copy'}
+                        {copiedUlpin ? 'Copied' : 'Copy'}
                       </button>
                     </div>
                     <div style={{ fontSize: '1.15rem', fontWeight: 700, color: '#005ea2', margin: '2px 0' }}>
@@ -2523,7 +2605,7 @@ export default function WebGISPage() {
                   {/* ADVANCED LADM & BITEMPORAL AUDIT PANEL */}
                   <div style={{ marginTop: '12px', marginBottom: '12px', border: '1px solid #1a4480', borderRadius: '4px', fontSize: '0.75rem' }}>
                     <div style={{ background: '#1a4480', color: 'white', padding: '6px 8px', fontWeight: 600, display: 'flex', justifyContent: 'space-between' }}>
-                      <span>🏛️ ISO 19152 (LADM) Profile</span>
+                      <span>ISO 19152 (LADM) Profile</span>
                       <span style={{ background: '#00a91c', padding: '1px 6px', borderRadius: '10px', fontSize: '0.65rem' }}>CONFORMANT</span>
                     </div>
                     <div style={{ padding: '6px 8px', background: '#f0f4f8' }}>
@@ -2542,7 +2624,7 @@ export default function WebGISPage() {
                     </div>
 
                     <div style={{ background: '#e1f3f8', borderTop: '1px solid #c9e4eb', padding: '6px 8px' }}>
-                      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#005ea2', marginBottom: '4px' }}>⏳ Bi-Temporal Cadastre Versioning</div>
+                      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#005ea2', marginBottom: '4px' }}>Bi-Temporal Cadastre Versioning</div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
                         <span style={{ color: '#565c65' }}>Valid Time:</span>
                         <strong>{selectedParcel.survey_date || 'Not recorded'}</strong>
@@ -2554,7 +2636,7 @@ export default function WebGISPage() {
                     </div>
 
                     <div style={{ background: '#fff9e6', borderTop: '1px solid #ffe699', padding: '6px 8px' }}>
-                      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#8c5b00', marginBottom: '4px' }}>🔍 Per-Vertex Audit Lineage</div>
+                      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#8c5b00', marginBottom: '4px' }}>Per-Vertex Audit Lineage</div>
                       <div style={{ color: '#565c65', fontSize: '0.7rem' }}>
                         {/* No real per-vertex uncertainty or per-vertex source attribution is
                             produced anywhere in this pipeline — only a real, single positional-
@@ -2578,7 +2660,7 @@ export default function WebGISPage() {
                       surfaced anywhere in the UI. */}
                   <div style={{ border: '1px solid #1a4480', borderRadius: '4px' }}>
                     <div style={{ background: '#1a4480', color: '#fff', padding: '6px 8px', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase' }}>
-                      🧬 Parcel Harmonization Evidence
+                      Parcel Harmonization Evidence
                     </div>
                     <div style={{ padding: '8px', fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '5px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -2638,7 +2720,7 @@ export default function WebGISPage() {
                         gap: '6px',
                       }}
                     >
-                      <span>📐</span>
+                      <span></span>
                       <span>Launch In-App FMB CAD Studio</span>
                     </button>
                   </div>
@@ -2665,7 +2747,7 @@ export default function WebGISPage() {
           }}>
             <div style={{ background: '#005ea2', padding: '24px', color: '#ffffff', textAlign: 'center' }}>
               <h2 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '2rem' }}>🌍</span> Welcome to GeovaX
+                <span style={{ fontSize: '2rem' }}></span> Welcome to GeovaX
               </h2>
               <p style={{ margin: '10px 0 0 0', opacity: 0.9, fontSize: '0.95rem' }}>
                 The Enterprise Web-GIS & Land Administration Platform
@@ -2758,7 +2840,7 @@ export default function WebGISPage() {
             }}>
               <div>
                 <div style={{ fontSize: '0.72rem', color: '#a9d9e8', textTransform: 'uppercase', fontWeight: 700 }}>
-                  ⚖️ e-Courts National Judicial Data Grid · Certified Dossier
+                  e-Courts National Judicial Data Grid · Certified Dossier
                 </div>
                 <div style={{ fontSize: '1.25rem', fontWeight: 700, marginTop: '2px' }}>
                   CNR {activeCaseModal.cnr}
@@ -2780,7 +2862,7 @@ export default function WebGISPage() {
                   justifyContent: 'center',
                 }}
               >
-                ✕
+                ×
               </button>
             </div>
 
@@ -2792,7 +2874,7 @@ export default function WebGISPage() {
                 padding: '12px',
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <strong style={{ color: '#9e1c23', fontSize: '0.95rem' }}>🚨 {activeCaseModal.status}</strong>
+                  <strong style={{ color: '#9e1c23', fontSize: '0.95rem' }}>{activeCaseModal.status}</strong>
                   <span style={{ fontSize: '0.75rem', fontWeight: 700, background: '#d83933', color: '#ffffff', padding: '2px 8px', borderRadius: '4px' }}>
                     {activeCaseModal.case_type}
                   </span>
@@ -2854,7 +2936,7 @@ export default function WebGISPage() {
                     cursor: 'pointer',
                   }}
                 >
-                  {noticeIssued ? '✓ Section 7 Notice Issued to Tahsildar' : '🛡️ Issue Statutory Section 7 Notice'}
+                  {noticeIssued ? 'Section 7 Notice Issued to Tahsildar' : 'Issue Statutory Section 7 Notice'}
                 </button>
               </div>
             </div>
@@ -2902,7 +2984,7 @@ export default function WebGISPage() {
             }}>
               <div>
                 <div style={{ fontSize: '0.72rem', color: '#a9d9e8', textTransform: 'uppercase', fontWeight: 700 }}>
-                  📐 CollabLand 3.0 Standard · Generative FMB Studio
+                  CollabLand 3.0 Standard · Generative FMB Studio
                 </div>
                 <div style={{ fontSize: '1.2rem', fontWeight: 700, marginTop: '2px' }}>
                   Field Measurement Book — Survey {fmbModalData.survey_number} ({fmbModalData.village})
@@ -2924,7 +3006,7 @@ export default function WebGISPage() {
                   justifyContent: 'center',
                 }}
               >
-                ✕
+                ×
               </button>
             </div>
 
@@ -2979,7 +3061,7 @@ export default function WebGISPage() {
                     borderRadius: '4px',
                   }}
                 >
-                  📥 Download FMB Vector (SVG)
+                  Download FMB Vector (SVG)
                 </a>
                 <a
                   href={`http://127.0.0.1:8000/api/fmb/${fmbModalData.ulpin}?format=xml`}
@@ -2998,7 +3080,7 @@ export default function WebGISPage() {
                     borderRadius: '4px',
                   }}
                 >
-                  📄 Export CollabLand 3.0 XML
+                  Export CollabLand 3.0 XML
                 </a>
               </div>
             </div>

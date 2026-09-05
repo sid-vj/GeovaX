@@ -197,9 +197,31 @@ test.describe('GeovaX — jurisdiction-driven registry panel', () => {
     expect(text).toContain('not computed by this pipeline');
   });
 
+  // Every curated Chennai ward in AVAILABLE_WARDS now genuinely falls inside the real
+  // harmonisation pipeline's AOI (the wider "Chennai Metro Corridor" run), so there is no
+  // longer an in-catalogue ward left to exercise the honest out-of-coverage path with —
+  // itself a real improvement, not a test bug. These two tests now reach a genuinely
+  // out-of-coverage location the same way a real user would: searching a real place far
+  // outside Tamil Nadu (the worldwide Photon geocoder), which the app must honestly resolve
+  // to real-place-but-no-parcel-data, not silently keep showing the previous selection.
+  async function searchAndSelect(page: Page, query: string) {
+    const box = page.locator('input[placeholder*="Search"]').first();
+    await box.click();
+    await box.fill(query);
+    await page.waitForTimeout(3000);
+    // The real geocoder (Photon) ranks its own best match first — e.g. for "Mumbai" that's
+    // the actual city (osm_value=city), ahead of unrelated Chennai roads that merely contain
+    // the word (verified directly against the real API response). Click the dropdown's first
+    // suggestion by position rather than by text, which real place names can't be filtered
+    // against reliably (several distinct real places can share a substring).
+    const dropdown = page.locator('div[style*="340px"]').first();
+    await dropdown.locator(':scope > div').first().click();
+    await page.waitForTimeout(2500);
+  }
+
   test('14 & 15. no fabricated "0" states — out-of-coverage jurisdictions say so honestly', async ({ page }) => {
     await boot(page);
-    await selectWard(page, 'Tirusulam');
+    await searchAndSelect(page, 'Mumbai');
     await openDossier(page);
     const text = await page.locator('body').innerText();
     // Must not silently show a bare zero with no explanation.
@@ -212,20 +234,23 @@ test.describe('GeovaX — jurisdiction-driven registry panel', () => {
     // Egmore has real parcels and auto-selects the first one.
     await selectWard(page, 'Egmore');
     await page.getByText(/Telemetry/).first().click();
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(1500);
     const egmoreText = await page.locator('body').innerText();
     const egmoreUlpin = (egmoreText.match(/BHU-AADHAAR 14-DIGIT ULPIN\n[^\n]*\n([A-Z0-9]+)/) || [])[1];
     expect(egmoreUlpin, 'Egmore should have a real selected parcel to begin with').toBeTruthy();
 
-    // Vandalur (outside the pipeline AOI) has zero real parcels — the previously-selected
-    // Egmore parcel must not still be showing under Vandalur's header.
-    await selectWard(page, 'Vandalur');
+    // A real place far outside the pipeline AOI has zero real parcels — the previously-
+    // selected Egmore parcel must not still be showing under its header.
+    await searchAndSelect(page, 'Mumbai');
     await page.getByText(/Telemetry/).first().click();
-    await page.waitForTimeout(1000);
-    const vandalurText = await page.locator('body').innerText();
-    expect(vandalurText).not.toContain(egmoreUlpin);
-    expect(vandalurText).not.toContain('BHU-AADHAAR 14-DIGIT ULPIN');
-    expect(vandalurText).toContain('Click any parcel');
+    await page.waitForTimeout(1500);
+    const mumbaiText = await page.locator('body').innerText();
+    expect(mumbaiText).not.toContain(egmoreUlpin);
+    expect(mumbaiText).not.toContain('BHU-AADHAAR 14-DIGIT ULPIN');
+    // Either the generic "click a parcel" hint, or (correctly, for a location genuinely
+    // outside the pipeline's AOI) the more specific honest explanation of why there's no
+    // parcel to click — both are honest, neither is the stale Egmore parcel asserted above.
+    expect(/Click any parcel|No parcel telemetry available here/.test(mumbaiText)).toBeTruthy();
   });
 
   test('AI rooftop extraction runs against the currently-selected AOI, not a hardcoded one', async ({ page }) => {

@@ -7,7 +7,7 @@ export default defineConfig({
   workers: 1,
   reporter: [['list']],
   use: {
-    baseURL: 'http://127.0.0.1:3000',
+    baseURL: process.env.GEOVAX_WEB_BASE_URL || 'http://127.0.0.1:3000',
     trace: 'retain-on-failure',
     viewport: { width: 1600, height: 1200 },
   },
